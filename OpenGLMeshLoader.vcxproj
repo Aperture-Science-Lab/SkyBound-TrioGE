@@ -86,10 +86,14 @@
     <ClCompile Include="GLTexture.cpp" />
     <ClCompile Include="Model_3DS.cpp" />
     <ClCompile Include="OpenGLMeshLoader.cpp" />
+    <ClCompile Include="FlightController.cpp" />
+
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GLTexture.h" />
     <ClInclude Include="Model_3DS.h" />
+    <ClInclude Include="FlightController.h" />
+
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
