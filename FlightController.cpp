@@ -3,12 +3,15 @@
 
 FlightController::FlightController() {
     player.x = 0.0f;
-    player.y = 10.0f;
+    player.y = 40.0f; // Start in the air
     player.z = 0.0f;
     player.pitch = 0.0f;
     player.yaw = 0.0f;
     player.roll = 0.0f;
-    player.speed = 0.0f;
+    player.speed = 0.0f; // Start with 0 speed, or maybe some speed? User didn't specify speed, but "in air" usually implies flying. Let's keep 0 for safety or maybe 20? 
+    // User said "start on the air", usually implies flying. Let's give it some speed.
+    player.speed = 40.0f;
+
     
     cameraMode = 0;
     cameraDist = 15.0f;
@@ -33,13 +36,18 @@ void FlightController::handleMouse(int x, int y, int centerX, int centerY) {
     float dx = (float)(x - centerX);
     float dy = (float)(y - centerY);
 
-    float sensitivity = 0.1f;
+    float sensitivity = 0.05f; // Reduced sensitivity for better control
 
-    // Mouse X -> Roll
-    player.roll -= dx * sensitivity;
+    // Mouse X -> Roll (Adds to Roll)
+    player.roll += dx * sensitivity;
 
-    // Mouse Y -> Pitch (Inverted: Up -> Nose Down)
+    // Mouse Y -> Pitch (Adds to Pitch)
+    // Note: If Mouse Up (y < centerY), dy is negative.
+    // If user wants "Mouse Y adds to Pitch", then we just do +=.
+    // If they want "Up pitches nose down", and Up is negative dy, then adding negative dy decreases pitch (Nose Down).
+    // This matches "Inverted" feel if Pitch+ is Nose Up.
     player.pitch += dy * sensitivity;
+
 }
 
 void FlightController::update(float deltaTime) {
@@ -92,11 +100,17 @@ void FlightController::setupCamera() {
 void FlightController::drawPlane() {
     glPushMatrix();
     glTranslatef(player.x, player.y, player.z);
+    
+    // Apply rotations
     glRotatef(player.yaw, 0.0f, 1.0f, 0.0f);
     glRotatef(player.pitch, 1.0f, 0.0f, 0.0f);
     glRotatef(player.roll, 0.0f, 0.0f, 1.0f);
 
+    // Scale the model to be bigger
+    glScalef(3.0f, 3.0f, 3.0f);
+
     glBegin(GL_TRIANGLES);
+
     // Body
     glColor3f(0.7f, 0.7f, 0.7f);
     glVertex3f(0.0f, 0.0f, -2.0f);
