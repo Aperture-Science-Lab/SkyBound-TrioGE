@@ -91,44 +91,88 @@ void GLTexture::Use()
 
 void GLTexture::LoadBMP(char *name)
 {
-	// Create a place to store the texture
-	AUX_RGBImageRec *TextureImage[1];
+    FILE *file;
+    unsigned char header[54];
+    unsigned int dataPos;
+    unsigned int imageSize;
+    unsigned char *data;
 
-	// Set the pointer to NULL
-	memset(TextureImage,0,sizeof(void *)*1);
+    // Open the file
+    file = fopen(name, "rb");
+    if (!file) return;
 
-	// Load the bitmap and assign our pointer to it
-	TextureImage[0] = auxDIBImageLoad(name);
+    // Read the header, i.e. the 54 first bytes
+    if (fread(header, 1, 54, file) != 54) {
+        fclose(file);
+        return;
+    }
 
-	// If the texture file was not found, return from the function
-	if(!TextureImage[0]) 
-		return;
+    // A BMP file begins with "BM"
+    if (header[0] != 'B' || header[1] != 'M') {
+        fclose(file);
+        return;
+    }
 
-	// Just in case we want to use the width and height later
-	width = TextureImage[0]->sizeX;
-	height = TextureImage[0]->sizeY;
+    // Read ints from the byte array
+    dataPos    = *(int*)&(header[0x0A]);
+    imageSize  = *(int*)&(header[0x22]);
+    width      = *(int*)&(header[0x12]);
+    height     = *(int*)&(header[0x16]);
+    
+    // Handle potential negative height (top-down BMP)
+    if (height < 0) height = -height;
 
-	// Generate the OpenGL texture id
-	glGenTextures(1, &texture[0]);
+    // Some BMP files are misformatted, guess missing information
+    // Calculate proper size including padding for 24-bit BMP (rows aligned to 4 bytes)
+    int rowSize = (width * 3 + 3) & (~3);
+    int calculatedSize = rowSize * height;
+    
+    if (imageSize == 0) imageSize = calculatedSize;
+    
+    // Safety check
+    if (imageSize == 0) {
+        fclose(file);
+        return;
+    }
 
-	// Bind this texture to its id
-	glBindTexture(GL_TEXTURE_2D, texture[0]);
+    // Create a buffer
+    data = new unsigned char[imageSize];
 
-	// Use mipmapping filter
-	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    // Read the actual data from the file into the buffer
+    fseek(file, dataPos, SEEK_SET);
+    fread(data, 1, imageSize, file);
 
-	// Generate the mipmaps
-	gluBuild2DMipmaps(GL_TEXTURE_2D, 3, TextureImage[0]->sizeX, TextureImage[0]->sizeY, GL_RGB, GL_UNSIGNED_BYTE, TextureImage[0]->data);
+    // Everything is in memory now, the file can be closed
+    fclose(file);
+    
+    // BGR -> RGB
+    // BMP stores data as BGR, OpenGL expects RGB
+    // Be careful not to go out of bounds with the swap
+    for (unsigned int i = 0; i < imageSize; i += 3) {
+        if (i + 2 < imageSize) {
+            unsigned char temp = data[i];
+            data[i] = data[i+2];
+            data[i+2] = temp;
+        }
+    }
 
-	// Cleanup
-	if (TextureImage[0])
-	{
-		if (TextureImage[0]->data)
-			free(TextureImage[0]->data);
+    // Generate the OpenGL texture id
+    glGenTextures(1, &texture[0]);
 
-		free(TextureImage[0]);
-	}
+    // Bind this texture to its id
+    glBindTexture(GL_TEXTURE_2D, texture[0]);
+
+    // Use mipmapping filter
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+
+    // Generate the mipmaps
+    // Ensure 4-byte alignment is used (default, but good to be explicit for BMP)
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    gluBuild2DMipmaps(GL_TEXTURE_2D, 3, width, height, GL_RGB, GL_UNSIGNED_BYTE, data);
+
+    // Cleanup
+    delete[] data;
 }
 
 void GLTexture::LoadTGA(char *name)

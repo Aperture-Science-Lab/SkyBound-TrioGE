@@ -149,6 +149,14 @@ void FlightController::setupCamera() {
 
 void FlightController::loadModel(char* path) {
     model.Load(path);
+    
+    // Manually load the texture for the plane
+    // This overrides any texture defined in the 3DS file
+    // We apply it to all materials assuming it's a texture atlas
+    for (int i = 0; i < model.numMaterials; i++) {
+        model.Materials[i].tex.Load("models/plane/mitsubishi_a6m2_zero_texture.bmp");
+        model.Materials[i].textured = true;
+    }
 }
 
 void FlightController::drawPlane() {
