@@ -1,3 +1,5 @@
+#include <stdlib.h>
+#include <stdio.h>
 #include "TextureBuilder.h"
 #include "Model_3DS.h"
 #include "GLTexture.h"
@@ -17,7 +19,7 @@ char title[] = "3D Model Loader Sample";
 GLdouble fovy = 45.0;
 GLdouble aspectRatio = (GLdouble)WIDTH / (GLdouble)HEIGHT;
 GLdouble zNear = 0.1;
-GLdouble zFar = 100;
+GLdouble zFar = 1000;
 
 class Vector
 {
@@ -112,14 +114,42 @@ void RenderGround()
 	glColor3f(0.6f, 0.6f, 0.6f);
 	glEnable(GL_TEXTURE_2D);
 	glBindTexture(GL_TEXTURE_2D, tex_ground.texture[0]);
+    
+    // Ensure texture repeats
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
 	glPushMatrix();
+    
+    // Infinite Ground Logic
+    float px = 0, pz = 0;
+    if (flightSim) {
+        px = flightSim->player.position.x;
+        pz = flightSim->player.position.z;
+    }
+    
+    // Move ground with player
+    glTranslatef(px, 0, pz);
+    
+    float size = 2000.0f; // Larger than zFar
+    float texScale = 0.05f; // Adjust for texture density
+
 	glBegin(GL_QUADS);
 	glNormal3f(0, 1, 0);
-	glTexCoord2f(0, 0); glVertex3f(-20, 0, -20);
-	glTexCoord2f(5, 0); glVertex3f(20, 0, -20);
-	glTexCoord2f(5, 5); glVertex3f(20, 0, 20);
-	glTexCoord2f(0, 5); glVertex3f(-20, 0, 20);
+    
+    // Calculate texture coordinates based on world position to simulate movement
+	glTexCoord2f((px - size) * texScale, (pz - size) * texScale); 
+    glVertex3f(-size, 0, -size);
+    
+	glTexCoord2f((px + size) * texScale, (pz - size) * texScale); 
+    glVertex3f(size, 0, -size);
+    
+	glTexCoord2f((px + size) * texScale, (pz + size) * texScale); 
+    glVertex3f(size, 0, size);
+    
+	glTexCoord2f((px - size) * texScale, (pz + size) * texScale); 
+    glVertex3f(-size, 0, size);
+    
 	glEnd();
 	glPopMatrix();
 
@@ -141,6 +171,31 @@ void myDisplay(void)
     if (flightSim) {
         flightSim->setupCamera();
     }
+
+	// Sky box
+	glPushMatrix();
+	GLUquadricObj* qobj;
+	qobj = gluNewQuadric();
+	
+    // Move skybox with camera to make it appear infinite
+    if (flightSim) {
+        glTranslatef(flightSim->player.position.x, flightSim->player.position.y, flightSim->player.position.z);
+    }
+
+	glRotated(90, 1, 0, 1);
+	glBindTexture(GL_TEXTURE_2D, tex);
+	gluQuadricTexture(qobj, true);
+	gluQuadricNormals(qobj, GL_SMOOTH);
+    
+    // Disable depth write so it's always background
+    glDepthMask(GL_FALSE);
+    glDisable(GL_LIGHTING); // Disable lighting for skybox
+	gluSphere(qobj, 800, 100, 100); 
+    glEnable(GL_LIGHTING);  // Re-enable lighting
+    glDepthMask(GL_TRUE);
+    
+	gluDeleteQuadric(qobj);
+	glPopMatrix();
 
 	GLfloat lightIntensity[] = { 0.7f, 0.7f, 0.7f, 1.0f };
 	GLfloat lightPosition[] = { 0.0f, 100.0f, 0.0f, 0.0f };
@@ -165,19 +220,6 @@ void myDisplay(void)
 	glPushMatrix();
 	glRotatef(90.f, 1, 0, 0);
 	model_house.Draw();
-	glPopMatrix();
-
-	// Sky box
-	glPushMatrix();
-	GLUquadricObj* qobj;
-	qobj = gluNewQuadric();
-	glTranslated(50, 0, 0);
-	glRotated(90, 1, 0, 1);
-	glBindTexture(GL_TEXTURE_2D, tex);
-	gluQuadricTexture(qobj, true);
-	gluQuadricNormals(qobj, GL_SMOOTH);
-	gluSphere(qobj, 100, 100, 100);
-	gluDeleteQuadric(qobj);
 	glPopMatrix();
 
 	glutSwapBuffers();
@@ -264,6 +306,10 @@ void LoadAssets()
 	model_tree.Load("Models/tree/Tree1.3ds");
 	tex_ground.Load("Textures/ground.bmp");
 	loadBMP(&tex, "Textures/blu-sky-3.bmp", true);
+    
+    if (flightSim) {
+        flightSim->loadModel("models/plane/mitsubishi_a6m2_zero_model_11.3ds");
+    }
 }
 
 //=======================================================================
@@ -290,9 +336,9 @@ int main(int argc, char** argv)
     glutSetCursor(GLUT_CURSOR_NONE);
 
 	myInit();
-	LoadAssets();
     
     flightSim = new FlightController();
+	LoadAssets();
 
 	glutMainLoop();
     return 0;

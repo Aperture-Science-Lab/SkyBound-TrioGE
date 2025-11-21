@@ -2,22 +2,46 @@
 #include <stdio.h>
 
 FlightController::FlightController() {
-    player.x = 0.0f;
-    player.y = 40.0f; // Start in the air
-    player.z = 0.0f;
-    player.pitch = 0.0f;
-    player.yaw = 0.0f;
-    player.roll = 0.0f;
-    player.speed = 0.0f; // Start with 0 speed, or maybe some speed? User didn't specify speed, but "in air" usually implies flying. Let's keep 0 for safety or maybe 20? 
-    // User said "start on the air", usually implies flying. Let's give it some speed.
+    player.position = Vector3(0.0f, 40.0f, 0.0f);
+    player.forward = Vector3(0.0f, 0.0f, -1.0f);
+    player.up = Vector3(0.0f, 1.0f, 0.0f);
+    player.right = Vector3(1.0f, 0.0f, 0.0f);
     player.speed = 40.0f;
-
     
     cameraMode = 0;
-    cameraDist = 15.0f;
-    cameraHeight = 5.0f;
-    
+    cameraDist = 30.0f; // Increased distance for better view
+    cameraHeight = 8.0f; 
+
     for(int i=0; i<256; i++) keyState[i] = false;
+}
+
+void FlightController::rotateVector(Vector3& vec, const Vector3& axis, float angle) {
+    float rad = DEG2RAD(angle);
+    float c = cos(rad);
+    float s = sin(rad);
+    
+    // Rodrigues' rotation formula
+    Vector3 k = axis;
+    k.normalize();
+    
+    // v_rot = v * cos(theta) + (k x v) * sin(theta) + k * (k . v) * (1 - cos(theta))
+    
+    // Cross product k x v
+    Vector3 k_cross_v(
+        k.y * vec.z - k.z * vec.y,
+        k.z * vec.x - k.x * vec.z,
+        k.x * vec.y - k.y * vec.x
+    );
+    
+    // Dot product k . v
+    float k_dot_v = k.x * vec.x + k.y * vec.y + k.z * vec.z;
+    
+    Vector3 term1 = vec * c;
+    Vector3 term2 = k_cross_v * s;
+    Vector3 term3 = k * (k_dot_v * (1.0f - c));
+    
+    vec = term1 + term2 + term3;
+    vec.normalize();
 }
 
 void FlightController::handleInput(unsigned char key, bool pressed) {
@@ -36,108 +60,120 @@ void FlightController::handleMouse(int x, int y, int centerX, int centerY) {
     float dx = (float)(x - centerX);
     float dy = (float)(y - centerY);
 
-    float sensitivity = 0.05f; // Reduced sensitivity for better control
+    float sensitivity = 0.08f; // Increased sensitivity slightly
 
-    // Mouse X -> Roll (Adds to Roll)
-    player.roll += dx * sensitivity;
+    // Mouse X -> Roll (Rotate Up and Right around Forward)
+    // Inverted X for natural feel: Moving mouse right rolls right
+    if (fabs(dx) > 0.1f) {
+        rotateVector(player.up, player.forward, -dx * sensitivity);
+        rotateVector(player.right, player.forward, -dx * sensitivity);
+    }
 
-    // Mouse Y -> Pitch (Adds to Pitch)
-    // Note: If Mouse Up (y < centerY), dy is negative.
-    // If user wants "Mouse Y adds to Pitch", then we just do +=.
-    // If they want "Up pitches nose down", and Up is negative dy, then adding negative dy decreases pitch (Nose Down).
-    // This matches "Inverted" feel if Pitch+ is Nose Up.
-    player.pitch += dy * sensitivity;
-
+    // Mouse Y -> Pitch (Rotate Forward and Up around Right)
+    // Pulling back (positive dy) should pitch up
+    if (fabs(dy) > 0.1f) {
+        rotateVector(player.forward, player.right, -dy * sensitivity);
+        rotateVector(player.up, player.right, -dy * sensitivity);
+    }
+    
+    // Re-orthogonalize to prevent drift
+    // Forward is master, Right is derived, Up is derived
+    player.forward.normalize();
+    
+    // Right = Forward x Up (temp)
+    // Actually, let's just re-cross
+    Vector3 tempRight(
+        player.forward.y * player.up.z - player.forward.z * player.up.y,
+        player.forward.z * player.up.x - player.forward.x * player.up.z,
+        player.forward.x * player.up.y - player.forward.y * player.up.x
+    );
+    player.right = tempRight;
+    player.right.normalize();
+    
+    // Up = Right x Forward
+    player.up = Vector3(
+        player.right.y * player.forward.z - player.right.z * player.forward.y,
+        player.right.z * player.forward.x - player.right.x * player.forward.z,
+        player.right.x * player.forward.y - player.right.y * player.forward.x
+    );
+    player.up.normalize();
 }
 
 void FlightController::update(float deltaTime) {
     // Thrust
     if (keyState['w'] || keyState['W'])
-        player.speed += 20.0f * deltaTime;
+        player.speed += 30.0f * deltaTime;
     if (keyState['s'] || keyState['S'])
-        player.speed -= 20.0f * deltaTime;
+        player.speed -= 30.0f * deltaTime;
 
     // Clamp speed
-    if (player.speed < 0.0f) player.speed = 0.0f;
-    if (player.speed > 100.0f) player.speed = 100.0f;
+    if (player.speed < 10.0f) player.speed = 10.0f; // Minimum speed to fly
+    if (player.speed > 200.0f) player.speed = 200.0f;
 
-    // Yaw (Rudder)
-    if (keyState['a'] || keyState['A'])
-        player.yaw += 40.0f * deltaTime;
-    if (keyState['d'] || keyState['D'])
-        player.yaw -= 40.0f * deltaTime;
+    // Yaw (Rudder) - Rotate Forward and Right around Up
+    float yawSpeed = 40.0f;
+    if (keyState['a'] || keyState['A']) {
+        rotateVector(player.forward, player.up, yawSpeed * deltaTime);
+        rotateVector(player.right, player.up, yawSpeed * deltaTime);
+    }
+    if (keyState['d'] || keyState['D']) {
+        rotateVector(player.forward, player.up, -yawSpeed * deltaTime);
+        rotateVector(player.right, player.up, -yawSpeed * deltaTime);
+    }
 
-    // Physics
-    float radYaw = DEG2RAD(player.yaw);
-    float radPitch = DEG2RAD(player.pitch);
-
-    float dirX = sin(radYaw) * cos(radPitch);
-    float dirY = sin(radPitch);
-    float dirZ = -cos(radYaw) * cos(radPitch);
-
-    player.x += dirX * player.speed * deltaTime;
-    player.y += dirY * player.speed * deltaTime;
-    player.z += dirZ * player.speed * deltaTime;
+    // Move along forward vector
+    player.position = player.position + (player.forward * player.speed * deltaTime);
 }
 
 void FlightController::setupCamera() {
     if (cameraMode == 1) {
-        // 1st Person
-        glRotatef(-player.roll, 0.0f, 0.0f, 1.0f);
-        glRotatef(-player.pitch, 1.0f, 0.0f, 0.0f);
-        glRotatef(-player.yaw, 0.0f, 1.0f, 0.0f);
-        glTranslatef(-player.x, -player.y, -player.z);
+        // 1st Person (Cockpit View)
+        // Position camera slightly forward and up from center
+        Vector3 camPos = player.position + (player.forward * 4.0f) + (player.up * 1.5f);
+        Vector3 target = camPos + player.forward;
+        
+        gluLookAt(camPos.x, camPos.y, camPos.z,
+                  target.x, target.y, target.z,
+                  player.up.x, player.up.y, player.up.z);
     } else {
-        // 3rd Person
-        glTranslatef(0.0f, -cameraHeight, -cameraDist);
-        glRotatef(-player.roll, 0.0f, 0.0f, 1.0f);
-        glRotatef(-player.pitch, 1.0f, 0.0f, 0.0f);
-        glRotatef(-player.yaw, 0.0f, 1.0f, 0.0f);
-        glTranslatef(-player.x, -player.y, -player.z);
+        // 3rd Person (Chase Cam)
+        // Position camera behind and above
+        Vector3 camPos = player.position - (player.forward * cameraDist) + (player.up * cameraHeight);
+        Vector3 target = player.position + (player.forward * 20.0f); // Look ahead of the plane
+        
+        gluLookAt(camPos.x, camPos.y, camPos.z,
+                  target.x, target.y, target.z,
+                  player.up.x, player.up.y, player.up.z);
     }
+}
+
+void FlightController::loadModel(char* path) {
+    model.Load(path);
 }
 
 void FlightController::drawPlane() {
     glPushMatrix();
-    glTranslatef(player.x, player.y, player.z);
+    glTranslatef(player.position.x, player.position.y, player.position.z);
     
-    // Apply rotations
-    glRotatef(player.yaw, 0.0f, 1.0f, 0.0f);
-    glRotatef(player.pitch, 1.0f, 0.0f, 0.0f);
-    glRotatef(player.roll, 0.0f, 0.0f, 1.0f);
+    // Construct rotation matrix from basis vectors
+    // OpenGL uses column-major order
+    float rotMatrix[16] = {
+        player.right.x, player.right.y, player.right.z, 0,
+        player.up.x,    player.up.y,    player.up.z,    0,
+        -player.forward.x, -player.forward.y, -player.forward.z, 0, // Forward is -Z in OpenGL
+        0,              0,              0,              1
+    };
+    
+    glMultMatrixf(rotMatrix);
 
-    // Scale the model to be bigger
-    glScalef(3.0f, 3.0f, 3.0f);
-
-    glBegin(GL_TRIANGLES);
-
-    // Body
-    glColor3f(0.7f, 0.7f, 0.7f);
-    glVertex3f(0.0f, 0.0f, -2.0f);
-    glVertex3f(-0.5f, 0.0f, 1.0f);
-    glVertex3f(0.5f, 0.0f, 1.0f);
+    // Scale the model
+    // Adjust these values based on the actual model size
+    glScalef(1, 1, 1); 
     
-    glColor3f(0.5f, 0.5f, 0.5f);
-    glVertex3f(0.0f, 0.0f, -2.0f);
-    glVertex3f(0.5f, 0.0f, 1.0f);
-    glVertex3f(-0.5f, 0.0f, 1.0f);
+    // Rotate if necessary (many models are Y-up, but might need adjustment)
+    glRotatef(90, 1, 0, 0);
     
-    // Wings
-    glColor3f(0.8f, 0.2f, 0.2f);
-    glVertex3f(0.0f, 0.0f, 0.0f);
-    glVertex3f(-2.0f, 0.0f, 0.5f);
-    glVertex3f(-0.5f, 0.0f, 1.0f);
-    
-    glVertex3f(0.0f, 0.0f, 0.0f);
-    glVertex3f(0.5f, 0.0f, 1.0f);
-    glVertex3f(2.0f, 0.0f, 0.5f);
-    
-    // Tail
-    glColor3f(0.2f, 0.2f, 0.8f);
-    glVertex3f(0.0f, 0.0f, 1.0f);
-    glVertex3f(0.0f, 1.0f, 1.5f);
-    glVertex3f(0.0f, 0.0f, 1.5f);
-    glEnd();
+    model.Draw();
     
     glPopMatrix();
 }
