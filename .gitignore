@@ -52,3 +52,282 @@ UpgradeLog*.htm
 UpgradeLog*.XML
 *=True
 *=False
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.aps
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+ipch/
+
+# Visual Studio cache/options directory
+.vs/
+.vscode/
+
+# IntelliSense database
+*.VC.db
+*.VC.VC.opendb
+*.VC.db-shm
+*.VC.db-wal
+*.opensdf
+*.opendb
+*.sdf
+
+# Precompiled headers
+*.pch
+*.ipch
+
+# Visual Studio profiler
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# Visual Studio Trace Files
+*.e2e
+
+####################
+## C++ Specific
+####################
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+*.ilk
+*.exp
+*.res
+
+# Build logs and state
+*.log
+*.tlog
+*.lastbuildstate
+*.unsuccessfulbuild
+*.iobj
+*.ipdb
+
+####################
+## Visual Studio Project Files
+####################
+
+# Project-specific filters (auto-generated)
+*.vcxproj.filters
+*.vcxproj.user
+
+# NCB files
+*.ncb
+*.cachefile
+
+# Visual Studio cache files
+*.[Cc]ache
+
+####################
+## Backup & Upgrade Files
+####################
+
+# Backup & report files from converting old project files
+_UpgradeReport_Files/
+Backup*/
+UpgradeLog*.XML
+UpgradeLog*.htm
+ServiceFabricBackup/
+*.rptproj.bak
+
+# Old/backup project files
+*- Copy.vcxproj
+*- Copy.sln
+*- Copy.cpp
+*- Copy.h
+
+# Git merge backups
+*.orig
+
+####################
+## Temporary Files
+####################
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+~$*
+
+# Windows temp directories (specific paths)
+C:/Users/*/AppData/Local/Temp/*
+*/AppData/Local/Temp/*
+
+####################
+## Windows
+####################
+
+# Windows thumbnail cache files
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+
+# Dump file
+*.stackdump
+
+# Folder config file
+[Dd]esktop.ini
+
+# Recycle Bin
+$RECYCLE.BIN/
+
+# Windows Installer files
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+
+# Windows shortcuts
+*.lnk
+
+# Mac
+.DS_Store
+
+####################
+## NuGet
+####################
+
+# NuGet Packages
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+####################
+## ReSharper / Rider
+####################
+
+# ReSharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+####################
+## Other IDEs
+####################
+
+# Eclipse CDT
+.cproject
+.project
+.settings/
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+####################
+## CMake
+####################
+
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+####################
+## Project Specific
+####################
+
+# OpenGL pattern matches
+OpenGLMe.*/
+
+# Legacy patterns
+*=True
+*=False
+
+# Documentation auto-generated files
+*.bak
+
+# KEEP these files (important project documentation)
+# !LEVEL_SYSTEM_README.md
+# !ReadMe.txt
+
+####################
+## Optional: Large Assets
+####################
+
+# Uncomment if your assets are too large for Git
+# Consider using Git LFS for large binary files instead
+# Models/*.3ds
+# Models/*.obj
+# Models/*.fbx
+# Textures/*.bmp
+# Textures/*.png
+# Textures/*.jpg
+# Textures/*.tga
+
+####################
+## Git LFS
+####################
+
+# If using Git LFS, track large files with:
+# git lfs track "*.3ds"
+# git lfs track "*.bmp"
+# This will create a .gitattributes file

@@ -1,3 +1,1 @@
-﻿  FlightController.cpp
-GLTexture.obj : warning LNK4075: ignoring '/EDITANDCONTINUE' due to '/INCREMENTAL:NO' specification
-  OpenGLMeshLoader.vcxproj -> D:\Education\work-spaces\VisualStudio\Skybound\SkyBound-TrioGE\Debug\OpenGLMeshLoader19.exe
+﻿  OpenGLMeshLoader.vcxproj -> D:\Education\work-spaces\VisualStudio\Skybound\SkyBound-TrioGE\Debug\OpenGLMeshLoader19.exe
