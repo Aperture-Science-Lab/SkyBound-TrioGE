@@ -4,6 +4,7 @@
 #include "Model_3DS.h"
 #include "GLTexture.h"
 #include "FlightController.h"
+#include <Vector3f.h>
 #include <glut.h>
 
 FlightController* flightSim;
@@ -21,23 +22,11 @@ GLdouble aspectRatio = (GLdouble)WIDTH / (GLdouble)HEIGHT;
 GLdouble zNear = 0.1;
 GLdouble zFar = 1000;
 
-class Vector
-{
-public:
-	GLdouble x, y, z;
-	Vector() : x(0), y(0), z(0) {}
-	Vector(GLdouble _x, GLdouble _y, GLdouble _z) : x(_x), y(_y), z(_z) {}
-	void operator +=(float value)
-	{
-		x += value;
-		y += value;
-		z += value;
-	}
-};
 
-Vector Eye(20, 5, 20);
-Vector At(0, 0, 0);
-Vector Up(0, 1, 0);
+
+Vector3f Eye(20, 5, 20);
+Vector3f At(0, 0, 0);
+Vector3f Up(0, 1, 0);
 
 int cameraZoom = 0;
 

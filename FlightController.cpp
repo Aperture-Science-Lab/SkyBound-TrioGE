@@ -2,10 +2,10 @@
 #include <stdio.h>
 
 FlightController::FlightController() {
-    player.position = Vector3(0.0f, 40.0f, 0.0f);
-    player.forward = Vector3(0.0f, 0.0f, -1.0f);
-    player.up = Vector3(0.0f, 1.0f, 0.0f);
-    player.right = Vector3(1.0f, 0.0f, 0.0f);
+    player.position = Vector3f(0.0f, 40.0f, 0.0f);
+    player.forward = Vector3f(0.0f, 0.0f, -1.0f);
+    player.up = Vector3f(0.0f, 1.0f, 0.0f);
+    player.right = Vector3f(1.0f, 0.0f, 0.0f);
     player.speed = 40.0f;
     
     cameraMode = 0;
@@ -15,19 +15,19 @@ FlightController::FlightController() {
     for(int i=0; i<256; i++) keyState[i] = false;
 }
 
-void FlightController::rotateVector(Vector3& vec, const Vector3& axis, float angle) {
+void FlightController::rotateVector(Vector3f& vec, const Vector3f& axis, float angle) {
     float rad = DEG2RAD(angle);
     float c = cos(rad);
     float s = sin(rad);
     
     // Rodrigues' rotation formula
-    Vector3 k = axis;
-    k.normalize();
+    Vector3f k = axis;
+    k.unit();
     
     // v_rot = v * cos(theta) + (k x v) * sin(theta) + k * (k . v) * (1 - cos(theta))
     
     // Cross product k x v
-    Vector3 k_cross_v(
+    Vector3f k_cross_v(
         k.y * vec.z - k.z * vec.y,
         k.z * vec.x - k.x * vec.z,
         k.x * vec.y - k.y * vec.x
@@ -36,12 +36,12 @@ void FlightController::rotateVector(Vector3& vec, const Vector3& axis, float ang
     // Dot product k . v
     float k_dot_v = k.x * vec.x + k.y * vec.y + k.z * vec.z;
     
-    Vector3 term1 = vec * c;
-    Vector3 term2 = k_cross_v * s;
-    Vector3 term3 = k * (k_dot_v * (1.0f - c));
+    Vector3f term1 = vec * c;
+    Vector3f term2 = k_cross_v * s;
+    Vector3f term3 = k * (k_dot_v * (1.0f - c));
     
     vec = term1 + term2 + term3;
-    vec.normalize();
+    vec.unit();
 }
 
 void FlightController::handleInput(unsigned char key, bool pressed) {
@@ -78,25 +78,25 @@ void FlightController::handleMouse(int x, int y, int centerX, int centerY) {
     
     // Re-orthogonalize to prevent drift
     // Forward is master, Right is derived, Up is derived
-    player.forward.normalize();
+    player.forward.unit();
     
     // Right = Forward x Up (temp)
     // Actually, let's just re-cross
-    Vector3 tempRight(
+    Vector3f tempRight(
         player.forward.y * player.up.z - player.forward.z * player.up.y,
         player.forward.z * player.up.x - player.forward.x * player.up.z,
         player.forward.x * player.up.y - player.forward.y * player.up.x
     );
     player.right = tempRight;
-    player.right.normalize();
+    player.right.unit();
     
     // Up = Right x Forward
-    player.up = Vector3(
+    player.up = Vector3f(
         player.right.y * player.forward.z - player.right.z * player.forward.y,
         player.right.z * player.forward.x - player.right.x * player.forward.z,
         player.right.x * player.forward.y - player.right.y * player.forward.x
     );
-    player.up.normalize();
+    player.up.unit();
 }
 
 void FlightController::update(float deltaTime) {
@@ -129,8 +129,8 @@ void FlightController::setupCamera() {
     if (cameraMode == 1) {
         // 1st Person (Cockpit View)
         // Position camera slightly forward and up from center
-        Vector3 camPos = player.position + (player.forward * 4.0f) + (player.up * 1.5f);
-        Vector3 target = camPos + player.forward;
+        Vector3f camPos = player.position + (player.forward * 4.0f) + (player.up * 1.5f);
+        Vector3f target = camPos + player.forward;
         
         gluLookAt(camPos.x, camPos.y, camPos.z,
                   target.x, target.y, target.z,
@@ -138,8 +138,8 @@ void FlightController::setupCamera() {
     } else {
         // 3rd Person (Chase Cam)
         // Position camera behind and above
-        Vector3 camPos = player.position - (player.forward * cameraDist) + (player.up * cameraHeight);
-        Vector3 target = player.position + (player.forward * 20.0f); // Look ahead of the plane
+        Vector3f camPos = player.position - (player.forward * cameraDist) + (player.up * cameraHeight);
+        Vector3f target = player.position + (player.forward * 20.0f); // Look ahead of the plane
         
         gluLookAt(camPos.x, camPos.y, camPos.z,
                   target.x, target.y, target.z,
