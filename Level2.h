@@ -3,16 +3,25 @@
 #include "FlightController.h"
 #include "Model_3DS.h"
 #include "GLTexture.h"
+#include <vector>
 
 // Forward declaration
 void loadBMP(unsigned int* textureID, char* strFileName, int wrap);
+
+// Structure for Wind Strips
+struct WindParticle {
+    Vector3f position;
+    float length;
+    float speed;
+    float life;
+    bool active;
+};
 
 class Level2 : public Level {
 public:
     Level2();
     ~Level2() override;
     
-    // Override base class methods
     void init() override;
     void update(float deltaTime) override;
     void render() override;
@@ -26,22 +35,22 @@ public:
     void onExit() override;
     
 private:
-    // Flight simulator components
     FlightController* flightSim;
     
-    // Models
     Model_3DS model_house;
     Model_3DS model_tree;
-    
-    // Textures
     GLTexture tex_ground;
     unsigned int tex_sky;
     
-    // Window dimensions for mouse centering
     int screenWidth;
     int screenHeight;
     
-    // Rendering helper methods
+    // Wind Effect System
+    std::vector<WindParticle> windParticles;
+    void initWindParticles();
+    void updateWindParticles(float deltaTime);
+    void renderWindParticles();
+
     void renderGround();
     void renderSky();
     void loadAssets();
