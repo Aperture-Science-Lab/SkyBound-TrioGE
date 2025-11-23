@@ -44,6 +44,17 @@ void Level2::render() {
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
+    // --- DYNAMIC FOV UPDATE START ---
+    if (flightSim) {
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        // Use the flight controller's calculated FOV
+        // Assuming aspectRatio is global or calculated (WIDTH/HEIGHT)
+        float aspect = (float)screenWidth / (float)(screenHeight > 0 ? screenHeight : 1);
+        gluPerspective(flightSim->getFOV(), aspect, 0.1, 2000.0);
+    }
+    // --- DYNAMIC FOV UPDATE END ---
+
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     
