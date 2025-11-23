@@ -1,1 +1,14 @@
-﻿  OpenGLMeshLoader.vcxproj -> D:\Education\work-spaces\VisualStudio\Skybound\SkyBound-TrioGE\Debug\OpenGLMeshLoader19.exe
+﻿  FlightController.cpp
+  Level2.cpp
+  OpenGLMeshLoader.cpp
+C:\Users\Victus\Documents\Sky-bound\TextureBuilder.h(27,57): warning C4244: 'argument': conversion from 'int' to 'GLfloat', possible loss of data
+  (compiling source file 'OpenGLMeshLoader.cpp')
+  
+C:\Users\Victus\Documents\Sky-bound\TextureBuilder.h(28,57): warning C4244: 'argument': conversion from 'int' to 'GLfloat', possible loss of data
+  (compiling source file 'OpenGLMeshLoader.cpp')
+  
+  Vector3f.cpp
+C:\Users\Victus\Documents\Sky-bound\Vector3f.cpp(33,15): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+  Generating Code...
+GameManager.obj : warning LNK4075: ignoring '/EDITANDCONTINUE' due to '/INCREMENTAL:NO' specification
+  OpenGLMeshLoader.vcxproj -> C:\Users\Victus\Documents\Sky-bound\Debug\OpenGLMeshLoader19.exe

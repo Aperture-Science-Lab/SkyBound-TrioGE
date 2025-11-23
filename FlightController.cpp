@@ -19,29 +19,28 @@ void FlightController::rotateVector(Vector3f& vec, const Vector3f& axis, float a
     float rad = DEG2RAD(angle);
     float c = cos(rad);
     float s = sin(rad);
-    
+
     // Rodrigues' rotation formula
-    Vector3f k = axis;
-    k.unit();
-    
+    Vector3f k = axis.unit();  // Get normalized axis
+
     // v_rot = v * cos(theta) + (k x v) * sin(theta) + k * (k . v) * (1 - cos(theta))
-    
+
     // Cross product k x v
     Vector3f k_cross_v(
         k.y * vec.z - k.z * vec.y,
         k.z * vec.x - k.x * vec.z,
         k.x * vec.y - k.y * vec.x
     );
-    
+
     // Dot product k . v
     float k_dot_v = k.x * vec.x + k.y * vec.y + k.z * vec.z;
-    
+
     Vector3f term1 = vec * c;
     Vector3f term2 = k_cross_v * s;
     Vector3f term3 = k * (k_dot_v * (1.0f - c));
-    
+
     vec = term1 + term2 + term3;
-    vec.unit();
+    // Don't normalize here - preserve the magnitude
 }
 
 void FlightController::handleInput(unsigned char key, bool pressed) {
@@ -75,28 +74,18 @@ void FlightController::handleMouse(int x, int y, int centerX, int centerY) {
         rotateVector(player.forward, player.right, -dy * sensitivity);
         rotateVector(player.up, player.right, -dy * sensitivity);
     }
-    
+
     // Re-orthogonalize to prevent drift
-    // Forward is master, Right is derived, Up is derived
-    player.forward.unit();
-    
-    // Right = Forward x Up (temp)
-    // Actually, let's just re-cross
-    Vector3f tempRight(
-        player.forward.y * player.up.z - player.forward.z * player.up.y,
-        player.forward.z * player.up.x - player.forward.x * player.up.z,
-        player.forward.x * player.up.y - player.forward.y * player.up.x
-    );
-    player.right = tempRight;
-    player.right.unit();
-    
-    // Up = Right x Forward
-    player.up = Vector3f(
-        player.right.y * player.forward.z - player.right.z * player.forward.y,
-        player.right.z * player.forward.x - player.right.x * player.forward.z,
-        player.right.x * player.forward.y - player.right.y * player.forward.x
-    );
-    player.up.unit();
+    // Normalize all vectors first
+    player.forward = player.forward.unit();
+    player.right = player.right.unit();
+    player.up = player.up.unit();
+
+    // Right = Forward x Up (to fix any drift)
+    player.right = player.forward.cross(player.up).unit();
+
+    // Up = Right x Forward (ensure perfect orthogonality)
+    player.up = player.right.cross(player.forward).unit();
 }
 
 void FlightController::update(float deltaTime) {
