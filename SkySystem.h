@@ -26,7 +26,7 @@ public:
     
 private:
     unsigned int tex_sky;
-    unsigned int tex_flare[6];
+    unsigned int tex_flare[10];  // More flare textures for AAA quality
     
     Vector3f sunDirection;
     float sunIntensity;
@@ -34,8 +34,11 @@ private:
     // Load sky texture from BMP file
     bool loadSkyTexture(const char* filename);
     
-    // Generate lens flare textures
+    // Generate lens flare textures (AAA quality)
     void generateFlareTextures();
+    
+    // Render sun glow on skybox
+    void renderSunGlow(const Vector3f& playerPosition);
     
     // Check if sun is visible and get screen position
     bool isSunVisible(const Vector3f& playerPosition, const Vector3f& playerForward,

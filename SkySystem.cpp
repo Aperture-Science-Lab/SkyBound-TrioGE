@@ -4,14 +4,16 @@
 #include <cstdio>
 
 SkySystem::SkySystem() : tex_sky(0), sunIntensity(1.0f) {
-    // Default sun direction (high and slightly to the right)
-    sunDirection = Vector3f(0.4f, 0.85f, -0.35f);
+    // Sun direction matching the sky.bmp texture - the orange sunset area
+    // The sunset appears on the opposite side of the sky sphere from current view
+    // Pointing towards positive Z (behind initial camera) and low on horizon
+    sunDirection = Vector3f(0.0f, 0.25f, 0.97f);  // Low sun, behind player (towards sunset)
     float len = sqrt(sunDirection.x*sunDirection.x + sunDirection.y*sunDirection.y + sunDirection.z*sunDirection.z);
     sunDirection.x /= len;
     sunDirection.y /= len;
     sunDirection.z /= len;
     
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 10; i++) {
         tex_flare[i] = 0;
     }
 }
@@ -20,7 +22,7 @@ SkySystem::~SkySystem() {
     if (tex_sky != 0) {
         glDeleteTextures(1, &tex_sky);
     }
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 10; i++) {
         if (tex_flare[i] != 0) {
             glDeleteTextures(1, &tex_flare[i]);
         }
@@ -28,7 +30,10 @@ SkySystem::~SkySystem() {
 }
 
 void SkySystem::init() {
-    loadSkyTexture("textures/sky.bmp");
+    // Try multiple paths for sky texture
+    if (!loadSkyTexture("../textures/sky.bmp")) {
+        loadSkyTexture("textures/sky.bmp");
+    }
     generateFlareTextures();
 }
 
@@ -145,11 +150,12 @@ bool SkySystem::loadSkyTexture(const char* filename) {
 }
 
 void SkySystem::generateFlareTextures() {
-    for (int i = 0; i < 6; i++) {
+    // Generate 10 high-quality AAA lens flare textures
+    for (int i = 0; i < 10; i++) {
         glGenTextures(1, &tex_flare[i]);
         glBindTexture(GL_TEXTURE_2D, tex_flare[i]);
         
-        const int size = 128;
+        const int size = 256;  // Higher resolution for quality
         const float halfSize = size / 2.0f;
         unsigned char* data = new unsigned char[size * size * 4];
         
@@ -158,43 +164,100 @@ void SkySystem::generateFlareTextures() {
                 float dx = (x - halfSize) / halfSize;
                 float dy = (y - halfSize) / halfSize;
                 float dist = sqrt(dx*dx + dy*dy);
+                float angle = atan2(dy, dx);
                 
                 float alpha = 0.0f;
                 float r = 1.0f, g = 1.0f, b = 1.0f;
                 
-                if (i == 0) {
-                    // Main sun glow - large soft circle
-                    alpha = (1.0f - dist) * 0.8f;
-                    if (alpha < 0) alpha = 0;
-                    alpha = alpha * alpha;
-                    r = 1.0f; g = 0.95f; b = 0.8f;
-                } else if (i == 1) {
-                    // Bright core
-                    alpha = pow(fmax(0.0f, 1.0f - dist), 4.0f);
-                    if (dist > 1.0f) alpha = 0;
-                    r = 1.0f; g = 1.0f; b = 1.0f;
-                } else if (i == 2) {
-                    // Hexagonal flare (ring)
-                    float ring = fabs(dist - 0.6f);
-                    alpha = (0.15f - ring) * 3.0f;
-                    if (alpha < 0) alpha = 0;
-                    r = 0.8f; g = 0.9f; b = 1.0f;
-                } else if (i == 3) {
-                    // Green/yellow circle
-                    alpha = fmax(0.0f, (1.0f - dist * 1.5f) * 0.5f);
-                    r = 0.7f; g = 1.0f; b = 0.5f;
-                } else if (i == 4) {
-                    // Small bright spot
-                    alpha = pow(fmax(0.0f, 1.0f - dist * 2.0f), 3.0f);
-                    if (dist > 0.5f) alpha = 0;
-                    r = 1.0f; g = 0.8f; b = 0.6f;
-                } else {
-                    // Outer ring flare
-                    float ring = fabs(dist - 0.8f);
-                    alpha = (0.1f - ring) * 5.0f;
-                    if (alpha < 0) alpha = 0;
-                    r = 0.9f; g = 0.7f; b = 1.0f;
+                switch(i) {
+                    case 0: // Sun corona - large soft warm glow
+                        alpha = pow(fmax(0.0f, 1.0f - dist), 2.5f);
+                        r = 1.0f; g = 0.9f; b = 0.7f;
+                        break;
+                        
+                    case 1: // Bright white core with rays
+                        {
+                            float core = pow(fmax(0.0f, 1.0f - dist * 2.0f), 6.0f);
+                            float rays = pow(fmax(0.0f, 1.0f - dist), 2.0f) * 
+                                         (0.5f + 0.5f * pow(fabs(sin(angle * 8.0f)), 8.0f));
+                            alpha = fmin(1.0f, core + rays * 0.3f);
+                            r = 1.0f; g = 1.0f; b = 1.0f;
+                        }
+                        break;
+                        
+                    case 2: // Blue/cyan ring flare
+                        {
+                            float ring = 1.0f - fabs(dist - 0.5f) * 5.0f;
+                            alpha = fmax(0.0f, ring) * 0.6f;
+                            r = 0.6f; g = 0.85f; b = 1.0f;
+                        }
+                        break;
+                        
+                    case 3: // Orange/gold circle
+                        alpha = pow(fmax(0.0f, 1.0f - dist * 1.2f), 3.0f) * 0.7f;
+                        r = 1.0f; g = 0.7f; b = 0.3f;
+                        break;
+                        
+                    case 4: // Green ghost circle
+                        alpha = pow(fmax(0.0f, 1.0f - dist * 1.5f), 2.0f) * 0.5f;
+                        r = 0.5f; g = 1.0f; b = 0.6f;
+                        break;
+                        
+                    case 5: // Purple/magenta spot
+                        alpha = pow(fmax(0.0f, 1.0f - dist * 2.0f), 4.0f) * 0.8f;
+                        r = 1.0f; g = 0.5f; b = 0.9f;
+                        break;
+                        
+                    case 6: // Rainbow ring (chromatic aberration)
+                        {
+                            float ring = 1.0f - fabs(dist - 0.7f) * 8.0f;
+                            alpha = fmax(0.0f, ring) * 0.4f;
+                            // Chromatic colors based on angle
+                            r = 0.8f + 0.2f * sin(angle * 2.0f);
+                            g = 0.8f + 0.2f * sin(angle * 2.0f + 2.1f);
+                            b = 0.8f + 0.2f * sin(angle * 2.0f + 4.2f);
+                        }
+                        break;
+                        
+                    case 7: // Hexagonal bokeh
+                        {
+                            // 6-sided shape
+                            float hex = 0.0f;
+                            for (int k = 0; k < 6; k++) {
+                                float a = k * 3.14159f / 3.0f;
+                                hex = fmax(hex, fabs(dx * cos(a) + dy * sin(a)));
+                            }
+                            alpha = pow(fmax(0.0f, 1.0f - hex * 1.5f), 2.0f) * 0.5f;
+                            r = 1.0f; g = 0.95f; b = 0.85f;
+                        }
+                        break;
+                        
+                    case 8: // Anamorphic streak texture
+                        {
+                            float streak = exp(-dy * dy * 50.0f) * exp(-dx * dx * 0.5f);
+                            alpha = streak * 0.8f;
+                            r = 1.0f; g = 0.95f; b = 0.9f;
+                        }
+                        break;
+                        
+                    case 9: // Starburst
+                        {
+                            float star = 0.0f;
+                            for (int k = 0; k < 6; k++) {
+                                float a = k * 3.14159f / 3.0f;
+                                float rayDist = fabs(sin(angle - a));
+                                star += exp(-rayDist * 20.0f) * exp(-dist * 3.0f);
+                            }
+                            alpha = fmin(1.0f, star) * 0.6f;
+                            r = 1.0f; g = 0.98f; b = 0.9f;
+                        }
+                        break;
                 }
+                
+                // Clamp values
+                if (alpha < 0) alpha = 0;
+                if (alpha > 1) alpha = 1;
+                if (r > 1) r = 1; if (g > 1) g = 1; if (b > 1) b = 1;
                 
                 int idx = (y * size + x) * 4;
                 data[idx + 0] = (unsigned char)(r * 255);
@@ -220,7 +283,10 @@ void SkySystem::renderSky(const Vector3f& playerPosition) {
     
     // Center on player
     glTranslatef(playerPosition.x, playerPosition.y, playerPosition.z);
-    glRotated(90, 1, 0, 1);
+    
+    // Rotate sky sphere so texture horizon aligns with world horizon
+    // Rotate 90 degrees around X axis so texture wraps correctly
+    glRotatef(-90.0f, 1.0f, 0.0f, 0.0f);
     
     // Setup for sky rendering
     glEnable(GL_TEXTURE_2D);
@@ -259,17 +325,16 @@ bool SkySystem::isSunVisible(const Vector3f& playerPosition, const Vector3f& pla
     screenX = (float)winX;
     screenY = (float)winY;
     
-    // Check if sun is in front of camera
+    // More lenient visibility check - allow flare even when sun is partially off-screen
     if (winZ < 0 || winZ > 1) return false;
-    if (screenX < -100 || screenX > screenWidth + 100) return false;
-    if (screenY < -100 || screenY > screenHeight + 100) return false;
     
-    // Check dot product with forward vector
-    float dot = sunDirection.x * playerForward.x +
-                sunDirection.y * playerForward.y +
-                sunDirection.z * playerForward.z;
+    // Allow sun to be off-screen for flare effect
+    float margin = 300.0f;
+    if (screenX < -margin || screenX > screenWidth + margin) return false;
+    if (screenY < -margin || screenY > screenHeight + margin) return false;
     
-    if (dot > 0.3f) return false;  // Sun behind us
+    // Always show lens flare when sun is visible in the hemisphere
+    // No dot product check - let the projection handle visibility
     
     return true;
 }
@@ -291,10 +356,11 @@ void SkySystem::renderLensFlare(const Vector3f& playerPosition, const Vector3f& 
     float dx = centerX - sunX;
     float dy = centerY - sunY;
     
-    // Calculate intensity based on sun position
+    // Calculate intensity - balanced for natural look
     float distFromCenter = sqrt(dx*dx + dy*dy);
     float maxDist = sqrt(centerX*centerX + centerY*centerY);
-    sunIntensity = 1.0f - (distFromCenter / maxDist) * 0.5f;
+    sunIntensity = 0.8f - (distFromCenter / maxDist) * 0.2f;  // Reduced intensity for natural look
+    if (sunIntensity > 0.8f) sunIntensity = 0.8f;
     
     // Save state
     glPushAttrib(GL_ALL_ATTRIB_BITS);
@@ -312,23 +378,57 @@ void SkySystem::renderLensFlare(const Vector3f& playerPosition, const Vector3f& 
     glDisable(GL_LIGHTING);
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending for realistic light
     glEnable(GL_TEXTURE_2D);
     
-    // Flare element configuration
-    float flarePositions[] = { 0.0f, 0.1f, 0.4f, 0.6f, 1.0f, 1.5f };
-    float flareSizes[] = { 150.0f, 80.0f, 40.0f, 60.0f, 30.0f, 50.0f };
-    float flareAlphas[] = { 0.4f, 0.8f, 0.3f, 0.25f, 0.5f, 0.2f };
+    // AAA-quality flare configuration: position along sun-center line, size, alpha, texture index
+    // Positions: 0.0 = at sun, 1.0 = at center, >1.0 = past center
+    struct FlareElement {
+        float position;
+        float size;
+        float alpha;
+        int textureIndex;
+        float r, g, b;
+    };
     
-    for (int i = 0; i < 6; i++) {
-        float t = flarePositions[i];
+    // Reduced alpha values for more subtle, natural look
+    FlareElement flares[] = {
+        // Main sun glow and corona - visible but not overwhelming
+        { 0.0f,  280.0f, 0.35f, 0, 1.0f, 0.95f, 0.85f },  // Warm corona
+        { 0.0f,  140.0f, 0.5f,  1, 1.0f, 1.0f, 1.0f },    // Core with rays
+        { 0.0f,  200.0f, 0.25f, 9, 1.0f, 0.98f, 0.9f },   // Starburst
+        
+        // Ghost flares along the line - subtle
+        { 0.15f, 60.0f,  0.2f,  2, 0.7f, 0.85f, 1.0f },   // Blue ring near sun
+        { 0.3f,  45.0f,  0.25f, 3, 1.0f, 0.8f, 0.4f },    // Orange spot
+        { 0.45f, 80.0f,  0.18f, 7, 1.0f, 0.95f, 0.85f },  // Hexagonal bokeh
+        { 0.6f,  40.0f,  0.22f, 4, 0.6f, 1.0f, 0.7f },    // Green ghost
+        { 0.75f, 55.0f,  0.18f, 6, 1.0f, 1.0f, 1.0f },    // Rainbow ring
+        { 0.9f,  45.0f,  0.2f,  5, 1.0f, 0.6f, 0.9f },    // Purple spot near center
+        { 1.1f,  35.0f,  0.18f, 3, 1.0f, 0.7f, 0.3f },    // Orange past center
+        { 1.3f,  60.0f,  0.15f, 2, 0.5f, 0.8f, 1.0f },    // Blue ring far
+        { 1.5f,  30.0f,  0.2f,  4, 0.7f, 1.0f, 0.8f },    // Green far
+        { 1.7f,  70.0f,  0.12f, 6, 1.0f, 1.0f, 1.0f },    // Rainbow far
+    };
+    
+    int numFlares = sizeof(flares) / sizeof(flares[0]);
+    
+    for (int i = 0; i < numFlares; i++) {
+        float t = flares[i].position;
         float fx = sunX + dx * t;
         float fy = sunY + dy * t;
-        float size = flareSizes[i] * sunIntensity;
-        float alpha = flareAlphas[i] * sunIntensity;
+        float size = flares[i].size * sunIntensity;
+        float alpha = flares[i].alpha * sunIntensity;
         
-        glBindTexture(GL_TEXTURE_2D, tex_flare[i]);
-        glColor4f(1.0f, 1.0f, 1.0f, alpha);
+        // Fade flares that are off-screen
+        float screenMargin = 50.0f;
+        if (fx < -screenMargin || fx > fScreenW + screenMargin ||
+            fy < -screenMargin || fy > fScreenH + screenMargin) {
+            continue;
+        }
+        
+        glBindTexture(GL_TEXTURE_2D, tex_flare[flares[i].textureIndex]);
+        glColor4f(flares[i].r, flares[i].g, flares[i].b, alpha);
         
         glBegin(GL_QUADS);
         glTexCoord2f(0, 0); glVertex2f(fx - size, fy - size);
@@ -338,16 +438,40 @@ void SkySystem::renderLensFlare(const Vector3f& playerPosition, const Vector3f& 
         glEnd();
     }
     
-    // Anamorphic streak
-    glBindTexture(GL_TEXTURE_2D, tex_flare[1]);
-    glColor4f(1.0f, 0.95f, 0.8f, 0.15f * sunIntensity);
-    float streakWidth = 400.0f * sunIntensity;
-    float streakHeight = 8.0f;
+    // AAA Anamorphic streak (horizontal light streak through sun - cinematic effect)
+    glBindTexture(GL_TEXTURE_2D, tex_flare[8]);
+    float streakIntensity = sunIntensity * 0.2f;  // More subtle
+    float streakWidth = fScreenW * 0.3f * sunIntensity;  // Much shorter
+    float streakHeight = 8.0f * sunIntensity;  // Thinner
+    
+    // Main streak - subtle
+    glColor4f(1.0f, 0.95f, 0.85f, streakIntensity);
     glBegin(GL_QUADS);
-    glTexCoord2f(0, 0.4f); glVertex2f(sunX - streakWidth, sunY - streakHeight);
-    glTexCoord2f(1, 0.4f); glVertex2f(sunX + streakWidth, sunY - streakHeight);
-    glTexCoord2f(1, 0.6f); glVertex2f(sunX + streakWidth, sunY + streakHeight);
-    glTexCoord2f(0, 0.6f); glVertex2f(sunX - streakWidth, sunY + streakHeight);
+    glTexCoord2f(0, 0); glVertex2f(sunX - streakWidth, sunY - streakHeight);
+    glTexCoord2f(1, 0); glVertex2f(sunX + streakWidth, sunY - streakHeight);
+    glTexCoord2f(1, 1); glVertex2f(sunX + streakWidth, sunY + streakHeight);
+    glTexCoord2f(0, 1); glVertex2f(sunX - streakWidth, sunY + streakHeight);
+    glEnd();
+    
+    // Secondary thinner streak - blue tint
+    glColor4f(0.85f, 0.9f, 1.0f, streakIntensity * 0.4f);
+    float streak2Height = 4.0f * sunIntensity;
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(sunX - streakWidth * 1.1f, sunY - streak2Height);
+    glTexCoord2f(1, 0); glVertex2f(sunX + streakWidth * 1.1f, sunY - streak2Height);
+    glTexCoord2f(1, 1); glVertex2f(sunX + streakWidth * 1.1f, sunY + streak2Height);
+    glTexCoord2f(0, 1); glVertex2f(sunX - streakWidth * 1.1f, sunY + streak2Height);
+    glEnd();
+    
+    // Screen-wide bloom - subtle glow
+    glBindTexture(GL_TEXTURE_2D, tex_flare[0]);
+    glColor4f(1.0f, 0.97f, 0.9f, 0.08f * sunIntensity);
+    float bloomSize = 450.0f * sunIntensity;
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(sunX - bloomSize, sunY - bloomSize);
+    glTexCoord2f(1, 0); glVertex2f(sunX + bloomSize, sunY - bloomSize);
+    glTexCoord2f(1, 1); glVertex2f(sunX + bloomSize, sunY + bloomSize);
+    glTexCoord2f(0, 1); glVertex2f(sunX - bloomSize, sunY + bloomSize);
     glEnd();
     
     // Restore state

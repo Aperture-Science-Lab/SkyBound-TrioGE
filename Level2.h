@@ -62,6 +62,7 @@ private:
     Model_3DS model_tree;
     Model_3DS model_fuelContainer;  // Fuel container model
     Model_3DS model_buildings[10];  // 10 different building models
+    Model_3DS model_airport;        // Airport runway model
     GLTexture tex_ground;
     
     // Sky and Lens Flare System (shared/reusable)
@@ -69,6 +70,30 @@ private:
     
     int screenWidth;
     int screenHeight;
+    
+    // Airport/Landing Target System
+    Vector3f airportPosition;
+    float airportRotation;
+    float airportScale;
+    float arrowBobOffset;           // For arrow animation
+    bool hasLanded;                 // Win condition
+    bool showWinMessage;
+    float winMessageTimer;
+    void initAirport();
+    void renderAirport();
+    void renderTargetArrow();
+    void checkLandingCondition();
+    void renderWinScreen();
+    
+    // Game Timer and Scoring System
+    float gameTimer;                // Countdown timer
+    float maxGameTime;              // Total time allowed
+    int score;                      // Player score
+    int landingBonus;               // Bonus for early landing
+    bool gameOver;                  // Time ran out
+    bool showGameOver;
+    void renderGameOverScreen();
+    void calculateScore();
     
     // Building Obstacle System
     std::vector<BuildingObstacle> buildings;

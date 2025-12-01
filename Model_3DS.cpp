@@ -759,10 +759,33 @@ void Model_3DS::MapNameChunkProcessor(long length, long findex, int matindex)
 	std::string n = name;
 	n.erase(n.end() - 3, n.end());
 	n += "bmp";
+	
 	// Load the name and indicate that the material has a texture
-	char fullname[80];
+	// Try multiple paths: direct path, textures/ subfolder, ../textures/
+	char fullname[256];
+	
+	// Try 1: Direct path (same folder as model)
 	sprintf(fullname, "%s%s", path, n.c_str());
 	Materials[matindex].tex.Load(fullname);
+	
+	// Try 2: textures/ subfolder
+	if (Materials[matindex].tex.texture[0] == 0) {
+		sprintf(fullname, "%stextures/%s", path, n.c_str());
+		Materials[matindex].tex.Load(fullname);
+	}
+	
+	// Try 3: With ../ prefix for Debug folder
+	if (Materials[matindex].tex.texture[0] == 0) {
+		sprintf(fullname, "../%s%s", path, n.c_str());
+		Materials[matindex].tex.Load(fullname);
+	}
+	
+	// Try 4: With ../ and textures/ subfolder
+	if (Materials[matindex].tex.texture[0] == 0) {
+		sprintf(fullname, "../%stextures/%s", path, n.c_str());
+		Materials[matindex].tex.Load(fullname);
+	}
+	
 	Materials[matindex].textured = true;
 
 	// move the file pointer back to where we got it so

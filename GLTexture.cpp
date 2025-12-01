@@ -47,7 +47,10 @@
 
 GLTexture::GLTexture()
 {
-
+    texture[0] = 0;  // Initialize to 0 (invalid texture)
+    texturename = NULL;
+    width = 0;
+    height = 0;
 }
 
 GLTexture::~GLTexture()
@@ -137,23 +140,32 @@ void GLTexture::LoadBMP(char *name)
 
     // Create a buffer
     data = new unsigned char[imageSize];
+    if (!data) {
+        fclose(file);
+        return;
+    }
 
     // Read the actual data from the file into the buffer
     fseek(file, dataPos, SEEK_SET);
-    fread(data, 1, imageSize, file);
+    size_t bytesRead = fread(data, 1, imageSize, file);
 
     // Everything is in memory now, the file can be closed
     fclose(file);
     
+    // Check if we read enough data
+    if (bytesRead < (size_t)(width * height * 3)) {
+        delete[] data;
+        return;
+    }
+    
     // BGR -> RGB
     // BMP stores data as BGR, OpenGL expects RGB
-    // Be careful not to go out of bounds with the swap
-    for (unsigned int i = 0; i < imageSize; i += 3) {
-        if (i + 2 < imageSize) {
-            unsigned char temp = data[i];
-            data[i] = data[i+2];
-            data[i+2] = temp;
-        }
+    // Use the actual width*height*3 for the loop to avoid going out of bounds
+    unsigned int actualSize = width * height * 3;
+    for (unsigned int i = 0; i + 2 < actualSize && i + 2 < imageSize; i += 3) {
+        unsigned char temp = data[i];
+        data[i] = data[i+2];
+        data[i+2] = temp;
     }
 
     // Generate the OpenGL texture id
@@ -167,8 +179,7 @@ void GLTexture::LoadBMP(char *name)
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
 
     // Generate the mipmaps
-    // Ensure 4-byte alignment is used (default, but good to be explicit for BMP)
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);  // Use 1-byte alignment for safety
     gluBuild2DMipmaps(GL_TEXTURE_2D, 3, width, height, GL_RGB, GL_UNSIGNED_BYTE, data);
 
     // Cleanup
