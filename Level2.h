@@ -17,6 +17,26 @@ struct WindParticle {
     bool active;
 };
 
+// Structure for Fuel Container Collectables
+struct FuelCollectable {
+    Vector3f position;
+    bool collected;
+    float bobOffset;      // For up/down animation
+    float rotationAngle;  // For spinning animation
+    float glowIntensity;  // For pulsing glow effect
+};
+
+// Structure for Building Obstacles
+struct BuildingObstacle {
+    Vector3f position;
+    int modelIndex;       // Which building model to use (0-9)
+    float rotation;       // Y-axis rotation
+    float scale;          // Scale factor
+    float width;          // Collision box width
+    float height;         // Collision box height
+    float depth;          // Collision box depth
+};
+
 class Level2 : public Level {
 public:
     Level2();
@@ -39,11 +59,29 @@ private:
     
     Model_3DS model_house;
     Model_3DS model_tree;
+    Model_3DS model_fuelContainer;  // Fuel container model
+    Model_3DS model_buildings[10];  // 10 different building models
     GLTexture tex_ground;
     unsigned int tex_sky;
     
     int screenWidth;
     int screenHeight;
+    
+    // Building Obstacle System
+    std::vector<BuildingObstacle> buildings;
+    void initBuildings();
+    void renderBuildings();
+    void checkBuildingCollision();
+    
+    // Fuel Collectable System
+    std::vector<FuelCollectable> fuelContainers;
+    int collectedCount;
+    float collectableTimer;  // For animation timing
+    void initFuelContainers();
+    void updateFuelContainers(float deltaTime);
+    void renderFuelContainers();
+    void checkFuelCollision();
+    void renderHUD();
     
     // Wind Effect System
     std::vector<WindParticle> windParticles;

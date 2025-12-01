@@ -1,12 +1,4 @@
-﻿  FlightController.cpp
-  Level2.cpp
-  OpenGLMeshLoader.cpp
-C:\Users\Victus\Documents\Sky-bound\TextureBuilder.h(27,57): warning C4244: 'argument': conversion from 'int' to 'GLfloat', possible loss of data
-  (compiling source file 'OpenGLMeshLoader.cpp')
-  
-C:\Users\Victus\Documents\Sky-bound\TextureBuilder.h(28,57): warning C4244: 'argument': conversion from 'int' to 'GLfloat', possible loss of data
-  (compiling source file 'OpenGLMeshLoader.cpp')
-  
-  Generating Code...
+﻿  Level2.cpp
+C:\Users\Victus\Documents\Sky-bound\Level2.cpp(437,5): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
 GameManager.obj : warning LNK4075: ignoring '/EDITANDCONTINUE' due to '/INCREMENTAL:NO' specification
   OpenGLMeshLoader.vcxproj -> C:\Users\Victus\Documents\Sky-bound\Debug\OpenGLMeshLoader19.exe
