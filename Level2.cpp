@@ -131,8 +131,8 @@ static bool loadGroundTexture(GLuint* texID, const char* filename) {
 Level2::Level2() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(720), 
     collectedCount(0), collectableTimer(0.0f), arrowBobOffset(0.0f), 
     hasLanded(false), showWinMessage(false), winMessageTimer(0.0f),
-    gameTimer(0.0f), maxGameTime(120.0f), score(0), landingBonus(0),
-    gameOver(false), showGameOver(false), cityModelLoaded(false) {
+    gameTimer(0.0f), maxGameTime(300.0f), score(0), landingBonus(0),
+    gameOver(false), showGameOver(false), cityModelLoaded(false), runwayLightTimer(0.0f) {
     airportPosition = Vector3f(0, 0, 0);
     airportRotation = 0.0f;
     airportScale = 1.0f;
@@ -148,14 +148,16 @@ Level2::~Level2() {
 void Level2::init() {
     flightSim = new FlightController();
     loadAssets();
-    particleEffects.init();   // Initialize particle effects system
+    particleEffects.init();   // Initialize particle effects system (wind)
+    crashSystem.init();       // Initialize unified crash system (explosion + smoke + sound)
+    soundSystem.init();       // Initialize sound system (idle + flying sounds)
     initFuelContainers();     // Initialize fuel collectables
     initCity();               // Initialize city model (before buildings!)
     initBuildings();          // Initialize building obstacles (away from city)
     initAirport();            // Initialize airport landing target
     
     // Initialize game timer and score
-    gameTimer = maxGameTime;  // 120 seconds countdown
+    gameTimer = maxGameTime;  // 300 seconds countdown (5 minutes for full day/night cycle)
     score = 0;
     gameOver = false;
     showGameOver = false;
@@ -204,15 +206,23 @@ void Level2::update(float deltaTime) {
     // Update arrow animation
     arrowBobOffset += deltaTime * 3.0f;
     
+    // Update runway light animation timer
+    runwayLightTimer += deltaTime;
+    if (runwayLightTimer > 2.0f) runwayLightTimer -= 2.0f;  // Loop every 2 seconds
+    
     // Update win message timer
     if (showWinMessage) {
         winMessageTimer += deltaTime;
     }
     
-    // Update game over display
+    // Update crash effects (explosion + smoke) if crashed
+    if (flightSim->isCrashed) {
+        crashSystem.update(deltaTime);
+        return;
+    }
+    
+    // Update game over display (time ran out - no crash)
     if (showGameOver) {
-        // Still update explosion particles when game over
-        particleEffects.explosion.update(deltaTime);
         return;
     }
     
@@ -225,9 +235,34 @@ void Level2::update(float deltaTime) {
             showGameOver = true;
         }
         
+        // Track if we were crashed before update
+        bool wasCrashedBefore = flightSim->isCrashed;
+        
         flightSim->update(deltaTime);
         
-        // Update particle effects (wind + explosion)
+        // Update sound system (idle/flying sounds based on state)
+        // Returns true if touchdown detected (flying -> idle transition)
+        bool touchdown = soundSystem.update(flightSim->isGrounded, flightSim->getSpeed());
+        
+        // Play touchdown sound when transitioning from flying to landed (anywhere)
+        if (touchdown && !hasLanded && !flightSim->isCrashed) {
+            soundSystem.playTouchdownSound();
+        }
+        
+        // Update day/night cycle
+        skySystem.update(deltaTime);
+        
+        // Check if FlightController detected a ground crash
+        // If so, trigger our unified crash system
+        if (flightSim->isCrashed && !wasCrashedBefore) {
+            Vector3f crashPos = flightSim->player.position;
+            crashPos.y = 1.0f;  // Slightly above ground for visibility
+            crashSystem.triggerCrash(crashPos);
+            soundSystem.playCrashSound();  // Stop engine sounds, play crash
+            return;
+        }
+        
+        // Update wind particle effects
         particleEffects.update(deltaTime, flightSim->player.position, 
                                flightSim->player.forward, flightSim->getSpeed());
         
@@ -270,7 +305,8 @@ void Level2::render() {
     renderGround();
     
     if (flightSim) {
-        flightSim->drawPlane();
+        // Draw plane with wing lights at night
+        flightSim->drawPlane(skySystem.isNightTime());
     }
     
     // Render Wind Strips using ParticleEffects system
@@ -289,6 +325,7 @@ void Level2::render() {
     
     // Render Airport and Target Arrow
     renderAirport();
+    renderRunwayLights(skySystem.isNightTime());  // Runway lights only visible at night
     renderTargetArrow();
     
     glPushMatrix();
@@ -302,14 +339,9 @@ void Level2::render() {
     model_house.Draw();
     glPopMatrix();
     
-    // Render Smoke Particles (handled by FlightController)
+    // Render Crash Effects (explosion + smoke) using unified CrashSystem
     if (flightSim) {
-        flightSim->renderSmoke();
-    }
-    
-    // Render Explosion Particles
-    if (flightSim) {
-        particleEffects.renderExplosion(flightSim->player.position);
+        crashSystem.render(flightSim->player.position);
     }
     
     // Render Lens Flare using shared SkySystem
@@ -326,8 +358,8 @@ void Level2::render() {
         renderWinScreen();
     }
     
-    // Render game over screen if time ran out
-    if (showGameOver) {
+    // Render game over screen if time ran out (not crash)
+    if (showGameOver && !flightSim->isCrashed) {
         renderGameOverScreen();
     }
     
@@ -389,6 +421,19 @@ void Level2::renderGround() {
 void Level2::handleKeyboard(unsigned char key, bool pressed) {
     if (!active) return;
     if (key == 27) exit(0);
+    
+    // Reset key - also reset crash and sound systems
+    if ((key == 'r' || key == 'R') && pressed) {
+        crashSystem.reset();
+        soundSystem.reset();
+        gameTimer = maxGameTime;
+        score = 0;
+        gameOver = false;
+        showGameOver = false;
+        hasLanded = false;
+        showWinMessage = false;
+    }
+    
     if (flightSim) flightSim->handleInput(key, pressed);
 }
 
@@ -531,6 +576,9 @@ void Level2::checkFuelCollision() {
         if (distSq < collisionRadius * collisionRadius) {
             fuelContainers[i].collected = true;
             collectedCount++;
+            
+            // Play coin collection sound
+            soundSystem.playCoinSound();
             
             // Add score for collecting fuel (100 points per container)
             score += 100;
@@ -768,33 +816,17 @@ void Level2::checkBuildingCollision() {
         if (fabs(dx) < halfWidth && fabs(dz) < halfDepth) {
             // Check height - player must be below building top
             if (playerPos.y < b.height && playerPos.y > 0) {
-                // CRASH! Trigger explosion
+                // CRASH! Use unified crash system
                 flightSim->isCrashed = true;
                 flightSim->player.velocity = Vector3f(0, 0, 0);
                 flightSim->player.throttle = 0;
                 
-                // Trigger explosion at crash location
-                particleEffects.triggerExplosion(playerPos);
-                
-                // Also trigger game over after crash
-                gameOver = true;
-                showGameOver = true;
+                // Trigger unified crash (explosion + smoke + sound)
+                crashSystem.triggerCrash(playerPos);
+                soundSystem.playCrashSound();
                 break;
             }
         }
-    }
-    
-    // Also check for ground collision (crash if altitude is 0 or below at high speed)
-    if (playerPos.y <= 0.5f && flightSim->getSpeed() > 30.0f) {
-        flightSim->isCrashed = true;
-        flightSim->player.velocity = Vector3f(0, 0, 0);
-        flightSim->player.throttle = 0;
-        
-        // Trigger explosion at crash location
-        particleEffects.triggerExplosion(playerPos);
-        
-        gameOver = true;
-        showGameOver = true;
     }
 }
 
@@ -820,6 +852,169 @@ void Level2::renderAirport() {
     model_airport.Draw();
     
     glPopMatrix();
+}
+
+void Level2::renderRunwayLights(bool isNight) {
+    // Only render runway lights at night
+    if (!isNight) return;
+    
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending for emissive glow
+    
+    // Runway parameters (matching checkLandingCondition)
+    float runwayLength = 150.0f;
+    float runwayWidth = 40.0f;
+    float runwayStartZ = airportPosition.z + runwayLength / 2;
+    float runwayEndZ = airportPosition.z - runwayLength / 2;
+    
+    // Calculate runway direction based on rotation
+    float rotRad = airportRotation * 3.14159f / 180.0f;
+    float cosRot = cos(rotRad);
+    float sinRot = sin(rotRad);
+    
+    // Pulsing effect - smooth sine wave
+    float pulse = 0.6f + 0.4f * sin(runwayLightTimer * 3.14159f);  // Pulse between 0.6 and 1.0
+    
+    // Sequential chase effect along runway
+    float chaseOffset = fmod(runwayLightTimer * 2.0f, 1.0f);  // 0 to 1 moving along runway
+    
+    // Number of lights along each side of runway
+    const int numLights = 12;
+    float lightSpacing = runwayLength / (float)(numLights - 1);
+    
+    // Edge lights (white/yellow) - along both sides of runway
+    for (int i = 0; i < numLights; i++) {
+        float t = (float)i / (float)(numLights - 1);  // 0 to 1 along runway
+        
+        // Calculate position along runway centerline
+        float zOffset = runwayLength / 2.0f - i * lightSpacing;
+        
+        // Apply rotation for angled runway
+        float localX = runwayWidth / 2.0f + 2.0f;  // Slightly outside runway edge
+        float localZ = zOffset;
+        
+        // Rotate around airport center
+        float worldXLeft = airportPosition.x + (-localX * cosRot - localZ * sinRot);
+        float worldZLeft = airportPosition.z + (-localX * sinRot + localZ * cosRot);
+        float worldXRight = airportPosition.x + (localX * cosRot - localZ * sinRot);
+        float worldZRight = airportPosition.z + (localX * sinRot + localZ * cosRot);
+        
+        // Chase effect - lights near the "chase position" are brighter
+        float chaseT = fmod(chaseOffset + t, 1.0f);
+        float chaseBrightness = 0.5f + 0.5f * (1.0f - fabs(chaseT - 0.5f) * 2.0f);
+        
+        // Combined brightness
+        float brightness = pulse * chaseBrightness;
+        
+        // Left edge light (warm white/amber)
+        glColor4f(1.0f * brightness, 0.9f * brightness, 0.5f * brightness, brightness);
+        glPushMatrix();
+        glTranslatef(worldXLeft, 0.5f, worldZLeft);  // Slightly above ground
+        glutSolidSphere(0.8f, 6, 6);
+        glPopMatrix();
+        
+        // Left glow halo
+        glColor4f(1.0f, 0.9f, 0.5f, 0.3f * brightness);
+        glPushMatrix();
+        glTranslatef(worldXLeft, 0.5f, worldZLeft);
+        glutSolidSphere(2.0f, 6, 6);
+        glPopMatrix();
+        
+        // Right edge light
+        glColor4f(1.0f * brightness, 0.9f * brightness, 0.5f * brightness, brightness);
+        glPushMatrix();
+        glTranslatef(worldXRight, 0.5f, worldZRight);
+        glutSolidSphere(0.8f, 6, 6);
+        glPopMatrix();
+        
+        // Right glow halo
+        glColor4f(1.0f, 0.9f, 0.5f, 0.3f * brightness);
+        glPushMatrix();
+        glTranslatef(worldXRight, 0.5f, worldZRight);
+        glutSolidSphere(2.0f, 6, 6);
+        glPopMatrix();
+    }
+    
+    // Threshold lights (green) at runway start - brighter and pulsing
+    float thresholdPulse = 0.7f + 0.3f * sin(runwayLightTimer * 6.28f);  // Faster pulse
+    const int numThresholdLights = 6;
+    float thresholdSpacing = runwayWidth / (float)(numThresholdLights - 1);
+    
+    for (int i = 0; i < numThresholdLights; i++) {
+        float localX = -runwayWidth / 2.0f + i * thresholdSpacing;
+        float localZ = runwayLength / 2.0f + 3.0f;  // At runway entry
+        
+        // Rotate around airport center
+        float worldX = airportPosition.x + (localX * cosRot - localZ * sinRot);
+        float worldZ = airportPosition.z + (localX * sinRot + localZ * cosRot);
+        
+        // Green threshold light
+        glColor4f(0.2f * thresholdPulse, 1.0f * thresholdPulse, 0.3f * thresholdPulse, thresholdPulse);
+        glPushMatrix();
+        glTranslatef(worldX, 0.5f, worldZ);
+        glutSolidSphere(1.0f, 6, 6);
+        glPopMatrix();
+        
+        // Green glow
+        glColor4f(0.2f, 1.0f, 0.3f, 0.4f * thresholdPulse);
+        glPushMatrix();
+        glTranslatef(worldX, 0.5f, worldZ);
+        glutSolidSphere(2.5f, 6, 6);
+        glPopMatrix();
+    }
+    
+    // End of runway lights (red) - warning
+    for (int i = 0; i < numThresholdLights; i++) {
+        float localX = -runwayWidth / 2.0f + i * thresholdSpacing;
+        float localZ = -runwayLength / 2.0f - 3.0f;  // At runway end
+        
+        // Rotate around airport center
+        float worldX = airportPosition.x + (localX * cosRot - localZ * sinRot);
+        float worldZ = airportPosition.z + (localX * sinRot + localZ * cosRot);
+        
+        // Red end light
+        glColor4f(1.0f * thresholdPulse, 0.2f * thresholdPulse, 0.2f * thresholdPulse, thresholdPulse);
+        glPushMatrix();
+        glTranslatef(worldX, 0.5f, worldZ);
+        glutSolidSphere(1.0f, 6, 6);
+        glPopMatrix();
+        
+        // Red glow
+        glColor4f(1.0f, 0.2f, 0.2f, 0.4f * thresholdPulse);
+        glPushMatrix();
+        glTranslatef(worldX, 0.5f, worldZ);
+        glutSolidSphere(2.5f, 6, 6);
+        glPopMatrix();
+    }
+    
+    // Centerline lights (white) down the middle of runway
+    const int numCenterLights = 8;
+    float centerSpacing = runwayLength / (float)(numCenterLights + 1);
+    
+    for (int i = 1; i <= numCenterLights; i++) {
+        float localZ = runwayLength / 2.0f - i * centerSpacing;
+        
+        // Rotate around airport center
+        float worldX = airportPosition.x + (-localZ * sinRot);
+        float worldZ = airportPosition.z + (localZ * cosRot);
+        
+        // Sequential flash for centerline
+        float flashPhase = fmod(runwayLightTimer * 4.0f + (float)i * 0.2f, 1.0f);
+        float flashBrightness = (flashPhase < 0.3f) ? 1.0f : 0.4f;
+        
+        // White centerline light
+        glColor4f(flashBrightness, flashBrightness, flashBrightness * 0.95f, flashBrightness);
+        glPushMatrix();
+        glTranslatef(worldX, 0.3f, worldZ);
+        glutSolidSphere(0.6f, 6, 6);
+        glPopMatrix();
+    }
+    
+    glPopAttrib();
 }
 
 void Level2::renderTargetArrow() {
@@ -908,27 +1103,46 @@ void Level2::checkLandingCondition() {
     float dz = playerPos.z - airportPosition.z;
     float distanceXZ = sqrt(dx*dx + dz*dz);
     
-    // Landing zone radius
-    float landingRadius = 80.0f;
+    // Runway dimensions and position
+    float runwayLength = 150.0f;  // Length of runway
+    float runwayWidth = 40.0f;    // Width of runway
+    float runwayStartZ = airportPosition.z + runwayLength / 2;  // Start of runway (entry point)
+    float runwayEndZ = airportPosition.z - runwayLength / 2;    // End of runway
     
-    // Landing conditions:
-    // 1. Close to airport (within landing zone)
-    // 2. Low altitude (near ground)
-    // 3. Low speed (not crashing)
+    // Check if player is on the runway (rectangular area)
+    bool onRunway = (fabs(playerPos.x - airportPosition.x) < runwayWidth / 2) &&
+                    (playerPos.z > runwayEndZ && playerPos.z < runwayStartZ);
     
-    if (distanceXZ < landingRadius && 
-        playerPos.y < 15.0f && 
-        playerPos.y > 0.0f &&
-        speed < 50.0f) {
+    // Win conditions (must be FULLY STOPPED on runway):
+    // 1. On the runway
+    // 2. On the ground (very low altitude)
+    // 3. FULLY STOPPED (speed < 5)
+    // 4. Grounded state
+    
+    if (onRunway && 
+        playerPos.y < 3.0f && 
+        playerPos.y >= 0.0f &&
+        speed < 5.0f &&
+        flightSim->isGrounded) {
         
         // Successful landing!
         hasLanded = true;
         showWinMessage = true;
         winMessageTimer = 0.0f;
         
-        // Calculate landing bonus based on remaining time
-        // More time left = higher bonus (up to 1000 points)
-        landingBonus = (int)(gameTimer / maxGameTime * 1000.0f);
+        // Play landing sound
+        soundSystem.playLandingSound();
+        
+        // Calculate landing position bonus
+        // Landing earlier on the runway (closer to entry/start) earns higher bonus
+        float runwayProgress = (runwayStartZ - playerPos.z) / runwayLength;  // 0.0 at start, 1.0 at end
+        runwayProgress = fmax(0.0f, fmin(1.0f, runwayProgress));  // Clamp 0-1
+        
+        // Earlier landing = higher bonus (up to 500 points)
+        int runwayBonus = (int)((1.0f - runwayProgress) * 500.0f);
+        
+        // Time bonus based on remaining time (up to 1000 points)
+        landingBonus = (int)(gameTimer / maxGameTime * 1000.0f) + runwayBonus;
         score += landingBonus;
         
         // Bonus for fuel collected

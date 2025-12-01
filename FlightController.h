@@ -34,6 +34,7 @@ public:
     void setupCamera();
     float getFOV();
     void drawPlane();
+    void drawPlane(bool showWingLights);  // Overload with wing lights option
     void loadModel(char* path);
     
     FlightPlayer player;
@@ -70,9 +71,13 @@ private:
     float viewBobTimer;
     float currentFOV;
     bool wasCrashed;  // Track crash state for smoke triggering
+    float wingLightTimer;  // Timer for blinking wing lights
     
     void rotateVector(Vector3f& vec, const Vector3f& axis, float angle);
     void resolveCollisions(float deltaTime);
     void applyPhysics(float deltaTime);
     void handleGroundControls(float deltaTime);
+    
+    // Render wing tip navigation lights (red=left, green=right)
+    void renderWingLights();
 };

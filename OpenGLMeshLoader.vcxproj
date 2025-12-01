@@ -58,7 +58,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>glut32.lib;legacy_stdio_definitions.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glut32.lib;legacy_stdio_definitions.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(OutputPath)\..</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
@@ -84,6 +84,7 @@
     <None Include="ReadMe.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="CrashSystem.cpp" />
     <ClCompile Include="GameManager.cpp" />
     <ClCompile Include="GLTexture.cpp" />
     <ClCompile Include="Level.cpp" />
@@ -94,9 +95,11 @@
     <ClCompile Include="ParticleEffects.cpp" />
     <ClCompile Include="SmokeSystem.cpp" />
     <ClCompile Include="SkySystem.cpp" />
+    <ClCompile Include="SoundSystem.cpp" />
     <ClCompile Include="Vector3f.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CrashSystem.h" />
     <ClInclude Include="GameManager.h" />
     <ClInclude Include="GLTexture.h" />
     <ClInclude Include="Level.h" />
@@ -106,6 +109,7 @@
     <ClInclude Include="ParticleEffects.h" />
     <ClInclude Include="SmokeSystem.h" />
     <ClInclude Include="SkySystem.h" />
+    <ClInclude Include="SoundSystem.h" />
     <ClInclude Include="Vector3f.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

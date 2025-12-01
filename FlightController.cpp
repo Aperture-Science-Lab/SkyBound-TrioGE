@@ -8,6 +8,7 @@ FlightController::FlightController() {
     cameraDist = 15.0f;  // Was 30.0f
     cameraHeight = 5.0f; // Was 8.0f
     wasCrashed = false;
+    wingLightTimer = 0.0f;
     smokeSystem.init();  // Initialize smoke particle system
 }
 
@@ -27,6 +28,7 @@ void FlightController::reset() {
     viewBobTimer = 0.0f;
     currentFOV = 45.0f;
     wasCrashed = false;
+    wingLightTimer = 0.0f;
     smokeSystem.reset();  // Clear smoke particles on reset
 
     for(int i=0; i<256; i++) keyState[i] = false;
@@ -142,6 +144,10 @@ void FlightController::applyPhysics(float deltaTime) {
 }
 
 void FlightController::update(float deltaTime) {
+    // Update wing light timer for blinking effect
+    wingLightTimer += deltaTime;
+    if (wingLightTimer > 2.0f) wingLightTimer -= 2.0f;  // Reset every 2 seconds
+    
     if (!isCrashed) {
         // Throttle
         if (keyState['w'] || keyState['W']) player.throttle += 0.5f * deltaTime;
@@ -299,6 +305,10 @@ void FlightController::setupCamera() {
 }
 
 void FlightController::drawPlane() {
+    drawPlane(false);  // Default: no wing lights
+}
+
+void FlightController::drawPlane(bool showWingLights) {
     FlightController::loadModel("models/plane/mitsubishi_a6m2_zero_model_11.3ds"); // Ensure model is loaded
     
     if(isCrashed) glColor3f(1,0,0);
@@ -319,8 +329,97 @@ void FlightController::drawPlane() {
     glRotatef(90, 1, 0, 0);
     
     model.Draw();
+    
+    // Render wing lights if enabled (for night time)
+    if (showWingLights) {
+        renderWingLights();
+    }
+    
     glPopMatrix();
     glColor3f(1,1,1);
+}
+
+void FlightController::renderWingLights() {
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending for glow
+    
+    // Wing light positions (relative to plane center in model space)
+    // Note: Model is rotated 90 degrees around X axis, so:
+    // Model X = World X (left/right)
+    // Model Y = World -Z (forward/back in model becomes up/down after rotation)
+    // Model Z = World Y (up/down in model becomes forward/back after rotation)
+    
+    // Wing tip positions - on the actual wing tips
+    float wingSpan = 5.5f;     // Half wing span (X axis - left/right)
+    float wingY = 0.3f;        // Slightly below center (becomes Z after rotation)
+    float wingZ = 0.0f;        // Center of wing chord (becomes -Y after rotation)
+    
+    // Blinking effect - on for 0.15s, off for 0.85s every second
+    bool lightOn = (fmod(wingLightTimer, 1.0f) < 0.15f);
+    
+    // Strobe white light on tail (anti-collision) - different timing
+    bool strobeOn = (fmod(wingLightTimer + 0.5f, 1.0f) < 0.1f);
+    
+    // Left wing tip - RED light (port side)
+    if (lightOn) {
+        glColor4f(1.0f, 0.0f, 0.0f, 1.0f);  // Bright red
+        glPushMatrix();
+        glTranslatef(-wingSpan, wingY, wingZ);  // Left wing tip
+        glutSolidSphere(0.25f, 8, 8);
+        glPopMatrix();
+        
+        // Red glow halo
+        glColor4f(1.0f, 0.0f, 0.0f, 0.4f);
+        glPushMatrix();
+        glTranslatef(-wingSpan, wingY, wingZ);
+        glutSolidSphere(0.6f, 8, 8);
+        glPopMatrix();
+    }
+    
+    // Right wing tip - GREEN light (starboard side)
+    if (lightOn) {
+        glColor4f(0.0f, 1.0f, 0.0f, 1.0f);  // Bright green
+        glPushMatrix();
+        glTranslatef(wingSpan, wingY, wingZ);  // Right wing tip
+        glutSolidSphere(0.25f, 8, 8);
+        glPopMatrix();
+        
+        // Green glow halo
+        glColor4f(0.0f, 1.0f, 0.0f, 0.4f);
+        glPushMatrix();
+        glTranslatef(wingSpan, wingY, wingZ);
+        glutSolidSphere(0.6f, 8, 8);
+        glPopMatrix();
+    }
+    
+    // Tail strobe - WHITE anti-collision light (on top of vertical stabilizer)
+    if (strobeOn) {
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);  // Bright white
+        glPushMatrix();
+        glTranslatef(0.0f, -1.5f, -4.5f);  // Tail position (adjusted for rotation)
+        glutSolidSphere(0.2f, 8, 8);
+        glPopMatrix();
+        
+        // White glow halo
+        glColor4f(1.0f, 1.0f, 1.0f, 0.5f);
+        glPushMatrix();
+        glTranslatef(0.0f, -1.5f, -4.5f);
+        glutSolidSphere(0.5f, 8, 8);
+        glPopMatrix();
+    }
+    
+    // Steady white navigation light on nose (always on at night)
+    glColor4f(1.0f, 1.0f, 0.9f, 0.9f);
+    glPushMatrix();
+    glTranslatef(0.0f, 0.2f, 3.0f);  // Nose of plane
+    glutSolidSphere(0.15f, 8, 8);
+    glPopMatrix();
+    
+    glPopAttrib();
 }
 
 void FlightController::loadModel(char* path) {

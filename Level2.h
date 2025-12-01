@@ -5,6 +5,8 @@
 #include "GLTexture.h"
 #include "SkySystem.h"
 #include "ParticleEffects.h"
+#include "CrashSystem.h"
+#include "SoundSystem.h"
 #include <vector>
 
 // Forward declaration
@@ -83,8 +85,10 @@ private:
     bool hasLanded;                 // Win condition
     bool showWinMessage;
     float winMessageTimer;
+    float runwayLightTimer;         // Timer for runway light animation
     void initAirport();
     void renderAirport();
+    void renderRunwayLights(bool isNight);  // Render runway indicator lights
     void renderTargetArrow();
     void checkLandingCondition();
     void renderWinScreen();
@@ -98,6 +102,12 @@ private:
     bool showGameOver;
     void renderGameOverScreen();
     void calculateScore();
+    
+    // Unified Crash System (explosion + smoke + sound)
+    CrashSystem crashSystem;
+    
+    // Sound System (idle + flying + crash sounds)
+    SoundSystem soundSystem;
     
     // Building Obstacle System
     std::vector<BuildingObstacle> buildings;
