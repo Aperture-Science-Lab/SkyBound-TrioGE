@@ -210,19 +210,54 @@ void Model_3DS::Load(char *name)
 
 	// Load the file
 	bin3ds = fopen(name,"rb");
+	
+	// Check if file opened successfully
+	if (!bin3ds) {
+		// Try with ../ prefix for Debug folder
+		char altPath[512];
+		sprintf(altPath, "../%s", name);
+		bin3ds = fopen(altPath, "rb");
+		if (!bin3ds) {
+			// File not found - mark as not visible and return
+			visible = false;
+			return;
+		}
+	}
 
-	// Make sure we are at the beginning
+	// Get file size to validate
+	fseek(bin3ds, 0, SEEK_END);
+	long fileSize = ftell(bin3ds);
 	fseek(bin3ds, 0, SEEK_SET);
+	
+	// Validate file size (at least header size)
+	if (fileSize < 6) {
+		fclose(bin3ds);
+		visible = false;
+		return;
+	}
 
 	// Load the Main Chunk's header
 	fread(&main.id,sizeof(main.id),1,bin3ds);
     fread(&main.len,sizeof(main.len),1,bin3ds);
+	
+	// Validate main chunk ID and length
+	if (main.id != MAIN3DS || main.len <= 0 || main.len > fileSize) {
+		fclose(bin3ds);
+		visible = false;
+		return;
+	}
 
 	// Start Processing
 	MainChunkProcessor(main.len, ftell(bin3ds));
 
 	// Don't need the file anymore so close it
 	fclose(bin3ds);
+	
+	// Validate that we loaded something
+	if (numObjects <= 0) {
+		visible = false;
+		return;
+	}
 
 	// Calculate the vertex normals
 	CalculateNormals();
@@ -243,19 +278,22 @@ void Model_3DS::Load(char *name)
 	// If the object doesn't have any texcoords generate some
 	for (int k = 0; k < numObjects; k++)
 	{
-		if (Objects[k].numTexCoords == 0)
+		if (Objects[k].numTexCoords == 0 && Objects[k].numVerts > 0)
 		{
 			// Set the number of texture coords
 			Objects[k].numTexCoords = Objects[k].numVerts;
 
-			// Allocate an array to hold the texture coordinates
-			Objects[k].TexCoords = new GLfloat[Objects[k].numTexCoords * 2];
+			// Validate before allocation
+			if (Objects[k].numTexCoords > 0 && Objects[k].numTexCoords < 10000000) {
+				// Allocate an array to hold the texture coordinates
+				Objects[k].TexCoords = new GLfloat[Objects[k].numTexCoords * 2];
 
-			// Make some texture coords
-			for (int m = 0; m < Objects[k].numTexCoords; m++)
-			{
-				Objects[k].TexCoords[2*m] = Objects[k].Vertexes[3*m];
-				Objects[k].TexCoords[2*m+1] = Objects[k].Vertexes[3*m+1];
+				// Make some texture coords
+				for (int m = 0; m < Objects[k].numTexCoords; m++)
+				{
+					Objects[k].TexCoords[2*m] = Objects[k].Vertexes[3*m];
+					Objects[k].TexCoords[2*m+1] = Objects[k].Vertexes[3*m+1];
+				}
 			}
 		}
 	}
@@ -761,29 +799,62 @@ void Model_3DS::MapNameChunkProcessor(long length, long findex, int matindex)
 	n += "bmp";
 	
 	// Load the name and indicate that the material has a texture
-	// Try multiple paths: direct path, textures/ subfolder, ../textures/
+	// Try multiple paths for texture loading
 	char fullname[256];
+	bool loaded = false;
 	
 	// Try 1: Direct path (same folder as model)
 	sprintf(fullname, "%s%s", path, n.c_str());
 	Materials[matindex].tex.Load(fullname);
+	if (Materials[matindex].tex.texture[0] != 0) loaded = true;
 	
 	// Try 2: textures/ subfolder
-	if (Materials[matindex].tex.texture[0] == 0) {
+	if (!loaded) {
 		sprintf(fullname, "%stextures/%s", path, n.c_str());
 		Materials[matindex].tex.Load(fullname);
+		if (Materials[matindex].tex.texture[0] != 0) loaded = true;
 	}
 	
-	// Try 3: With ../ prefix for Debug folder
-	if (Materials[matindex].tex.texture[0] == 0) {
+	// Try 3: textures/textures/ subfolder (for nested textures)
+	if (!loaded) {
+		sprintf(fullname, "%stextures/textures/%s", path, n.c_str());
+		Materials[matindex].tex.Load(fullname);
+		if (Materials[matindex].tex.texture[0] != 0) loaded = true;
+	}
+	
+	// Try 4: MATERIALS/ subfolder (for city models)
+	if (!loaded) {
+		sprintf(fullname, "%sMATERIALS/%s", path, n.c_str());
+		Materials[matindex].tex.Load(fullname);
+		if (Materials[matindex].tex.texture[0] != 0) loaded = true;
+	}
+	
+	// Try 5: With ../ prefix for Debug folder
+	if (!loaded) {
 		sprintf(fullname, "../%s%s", path, n.c_str());
 		Materials[matindex].tex.Load(fullname);
+		if (Materials[matindex].tex.texture[0] != 0) loaded = true;
 	}
 	
-	// Try 4: With ../ and textures/ subfolder
-	if (Materials[matindex].tex.texture[0] == 0) {
+	// Try 6: With ../ and textures/ subfolder
+	if (!loaded) {
 		sprintf(fullname, "../%stextures/%s", path, n.c_str());
 		Materials[matindex].tex.Load(fullname);
+		if (Materials[matindex].tex.texture[0] != 0) loaded = true;
+	}
+	
+	// Try 7: With ../ and textures/textures/ subfolder
+	if (!loaded) {
+		sprintf(fullname, "../%stextures/textures/%s", path, n.c_str());
+		Materials[matindex].tex.Load(fullname);
+		if (Materials[matindex].tex.texture[0] != 0) loaded = true;
+	}
+	
+	// Try 8: With ../ and MATERIALS/ subfolder
+	if (!loaded) {
+		sprintf(fullname, "../%sMATERIALS/%s", path, n.c_str());
+		Materials[matindex].tex.Load(fullname);
+		if (Materials[matindex].tex.texture[0] != 0) loaded = true;
 	}
 	
 	Materials[matindex].textured = true;
@@ -908,6 +979,15 @@ void Model_3DS::VertexListChunkProcessor(long length, long findex, int objindex)
 
 	// Read the number of vertices of the object
 	fread(&numVerts,sizeof(numVerts),1,bin3ds);
+	
+	// Validate vertex count to prevent bad allocations
+	if (numVerts == 0 || numVerts > 1000000) {
+		Objects[objindex].numVerts = 0;
+		Objects[objindex].Vertexes = NULL;
+		Objects[objindex].Normals = NULL;
+		fseek(bin3ds, findex, SEEK_SET);
+		return;
+	}
 
 	// Allocate arrays for the vertices and normals
 	Objects[objindex].Vertexes = new GLfloat[numVerts * 3];

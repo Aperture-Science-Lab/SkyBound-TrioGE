@@ -4,19 +4,11 @@
 #include "Model_3DS.h"
 #include "GLTexture.h"
 #include "SkySystem.h"
+#include "ParticleEffects.h"
 #include <vector>
 
 // Forward declaration
 void loadBMP(unsigned int* textureID, char* strFileName, int wrap);
-
-// Structure for Wind Strips
-struct WindParticle {
-    Vector3f position;
-    float length;
-    float speed;
-    float life;
-    bool active;
-};
 
 // Structure for Fuel Container Collectables
 struct FuelCollectable {
@@ -63,7 +55,19 @@ private:
     Model_3DS model_fuelContainer;  // Fuel container model
     Model_3DS model_buildings[10];  // 10 different building models
     Model_3DS model_airport;        // Airport runway model
+    Model_3DS model_city;           // City model with buildings
+    bool cityModelLoaded;           // Flag to track if city loaded successfully
     GLTexture tex_ground;
+    
+    // Particle Effects System (shared between levels)
+    ParticleEffects particleEffects;
+    
+    // City Model System
+    Vector3f cityPosition;
+    float cityRotation;
+    float cityScale;
+    void initCity();
+    void renderCity();
     
     // Sky and Lens Flare System (shared/reusable)
     SkySystem skySystem;
@@ -111,12 +115,6 @@ private:
     void checkFuelCollision();
     void renderHUD();
     
-    // Wind Effect System
-    std::vector<WindParticle> windParticles;
-    void initWindParticles();
-    void updateWindParticles(float deltaTime);
-    void renderWindParticles();
-
     void renderGround();
     void loadAssets();
 };

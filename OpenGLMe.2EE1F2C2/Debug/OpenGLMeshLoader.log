@@ -1,5 +1,21 @@
 ﻿  Level2.cpp
+  Model_3DS.cpp
+  C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(78) : You need to uncomment this if you are using MFC
   OpenGLMeshLoader.cpp
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(244,54): warning C4018: '>': signed/unsigned mismatch
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(182,10): warning C4996: 'strtok': This function or variable may be unsafe. Consider using strtok_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(212,11): warning C4996: 'fopen': This function or variable may be unsafe. Consider using fopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(218,3): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(219,12): warning C4996: 'fopen': This function or variable may be unsafe. Consider using fopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(807,2): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(813,3): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(820,3): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(827,3): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(834,3): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(841,3): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(848,3): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+C:\Users\Victus\Documents\Sky-bound\Model_3DS.cpp(855,3): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+  ParticleEffects.cpp
   Generating Code...
 GameManager.obj : warning LNK4075: ignoring '/EDITANDCONTINUE' due to '/INCREMENTAL:NO' specification
   OpenGLMeshLoader.vcxproj -> C:\Users\Victus\Documents\Sky-bound\Debug\OpenGLMeshLoader19.exe

@@ -132,10 +132,13 @@ Level2::Level2() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(
     collectedCount(0), collectableTimer(0.0f), arrowBobOffset(0.0f), 
     hasLanded(false), showWinMessage(false), winMessageTimer(0.0f),
     gameTimer(0.0f), maxGameTime(120.0f), score(0), landingBonus(0),
-    gameOver(false), showGameOver(false) {
+    gameOver(false), showGameOver(false), cityModelLoaded(false) {
     airportPosition = Vector3f(0, 0, 0);
     airportRotation = 0.0f;
     airportScale = 1.0f;
+    cityPosition = Vector3f(0, 0, 0);
+    cityRotation = 0.0f;
+    cityScale = 1.0f;
 }
 
 Level2::~Level2() {
@@ -145,10 +148,11 @@ Level2::~Level2() {
 void Level2::init() {
     flightSim = new FlightController();
     loadAssets();
-    initWindParticles(); // Initialize wind
-    initFuelContainers(); // Initialize fuel collectables
-    initBuildings();      // Initialize building obstacles
-    initAirport();        // Initialize airport landing target
+    particleEffects.init();   // Initialize particle effects system
+    initFuelContainers();     // Initialize fuel collectables
+    initCity();               // Initialize city model (before buildings!)
+    initBuildings();          // Initialize building obstacles (away from city)
+    initAirport();            // Initialize airport landing target
     
     // Initialize game timer and score
     gameTimer = maxGameTime;  // 120 seconds countdown
@@ -156,88 +160,6 @@ void Level2::init() {
     gameOver = false;
     showGameOver = false;
 }
-
-// --- WIND PARTICLE SYSTEM ---
-void Level2::initWindParticles() {
-    windParticles.resize(50); // 50 wind strips
-    for (auto& p : windParticles) {
-        p.active = false;
-    }
-}
-
-void Level2::updateWindParticles(float deltaTime) {
-    if (!flightSim) return;
-    
-    float speed = flightSim->getSpeed();
-    Vector3f camPos = flightSim->player.position;
-    Vector3f forward = flightSim->player.forward;
-    
-    // Only show wind if moving fast
-    if (speed < 30.0f) return;
-
-    for (auto& p : windParticles) {
-        if (!p.active) {
-            // Respawn chance based on speed
-            if (rand() % 100 < (speed / 5.0f)) {
-                p.active = true;
-                // Spawn ahead of player in a random radius
-                float range = 15.0f;
-                float rX = ((rand() % 100) / 50.0f - 1.0f) * range;
-                float rY = ((rand() % 100) / 50.0f - 1.0f) * range;
-                float rZ = ((rand() % 100) / 50.0f - 1.0f) * range;
-                
-                p.position = camPos + (forward * 40.0f) + Vector3f(rX, rY, rZ);
-                p.length = 2.0f + (speed / 20.0f); // Longer strips at higher speed
-                p.life = 1.0f;
-            }
-        } else {
-            // Move particle opposite to flight direction
-            p.position = p.position - (forward * (speed * 1.5f * deltaTime));
-            p.life -= deltaTime;
-            
-            // Deactivate if behind camera or dead
-            Vector3f toParticle = p.position - camPos;
-            float distSq = toParticle.x*toParticle.x + toParticle.y*toParticle.y + toParticle.z*toParticle.z;
-            
-            if (p.life <= 0 || (toParticle.x * forward.x + toParticle.y * forward.y + toParticle.z * forward.z) < -5.0f) {
-                p.active = false;
-            }
-        }
-    }
-}
-
-void Level2::renderWindParticles() {
-    if (!flightSim || flightSim->getSpeed() < 30.0f) return;
-
-    glDisable(GL_LIGHTING);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    
-    glLineWidth(1.0f);
-    glBegin(GL_LINES);
-    
-    Vector3f forward = flightSim->player.forward;
-    
-    for (const auto& p : windParticles) {
-        if (p.active) {
-            // Fade in/out based on life
-            float alpha = (flightSim->getSpeed() / 100.0f) * 0.5f; 
-            if (alpha > 0.5f) alpha = 0.5f;
-            
-            glColor4f(1.0f, 1.0f, 1.0f, 0.0f); // Tail (Transparent)
-            Vector3f tail = p.position + (forward * p.length);
-            glVertex3f(tail.x, tail.y, tail.z);
-            
-            glColor4f(1.0f, 1.0f, 1.0f, alpha); // Head (Visible)
-            glVertex3f(p.position.x, p.position.y, p.position.z);
-        }
-    }
-    
-    glEnd();
-    glDisable(GL_BLEND);
-    glEnable(GL_LIGHTING);
-}
-// ----------------------------
 
 void Level2::loadAssets() {
     model_house.Load("Models/house/house.3DS");
@@ -258,6 +180,10 @@ void Level2::loadAssets() {
     
     // Load airport model
     model_airport.Load("Models/newairport/Airport Model.3ds");
+    
+    // Load city model (may fail if file is corrupt/missing - that's OK)
+    model_city.Load("Models/city/CITY+BUILDINGS.3ds");
+    cityModelLoaded = model_city.visible;  // Track if it loaded successfully
     
     // Try to load ground texture using custom loader
     if (!loadGroundTexture(&tex_ground.texture[0], "../textures/grassGround.bmp")) {
@@ -285,7 +211,9 @@ void Level2::update(float deltaTime) {
     
     // Update game over display
     if (showGameOver) {
-        return;  // Stop updating when game over
+        // Still update explosion particles when game over
+        particleEffects.explosion.update(deltaTime);
+        return;
     }
     
     if (!hasLanded && !gameOver) {
@@ -298,7 +226,11 @@ void Level2::update(float deltaTime) {
         }
         
         flightSim->update(deltaTime);
-        updateWindParticles(deltaTime); // Update wind
+        
+        // Update particle effects (wind + explosion)
+        particleEffects.update(deltaTime, flightSim->player.position, 
+                               flightSim->player.forward, flightSim->getSpeed());
+        
         updateFuelContainers(deltaTime); // Update fuel containers
         checkFuelCollision(); // Check for collection
         checkBuildingCollision(); // Check for building crashes
@@ -341,14 +273,19 @@ void Level2::render() {
         flightSim->drawPlane();
     }
     
-    // Render Wind Strips
-    renderWindParticles();
+    // Render Wind Strips using ParticleEffects system
+    if (flightSim) {
+        particleEffects.renderWind(flightSim->player.forward, flightSim->getSpeed());
+    }
     
     // Render Fuel Containers
     renderFuelContainers();
     
     // Render Buildings
     renderBuildings();
+    
+    // Render City Model
+    renderCity();
     
     // Render Airport and Target Arrow
     renderAirport();
@@ -368,6 +305,11 @@ void Level2::render() {
     // Render Smoke Particles (handled by FlightController)
     if (flightSim) {
         flightSim->renderSmoke();
+    }
+    
+    // Render Explosion Particles
+    if (flightSim) {
+        particleEffects.renderExplosion(flightSim->player.position);
     }
     
     // Render Lens Flare using shared SkySystem
@@ -717,18 +659,55 @@ void Level2::renderHUD() {
 
 // ============ BUILDING OBSTACLE FUNCTIONS ============
 
+// --- CITY MODEL SYSTEM ---
+void Level2::initCity() {
+    // Place city in the center area of the map
+    cityPosition = Vector3f(0.0f, 0.0f, 0.0f);
+    cityRotation = 0.0f;
+    cityScale = 1.5f;  // Scale up for visibility
+}
+
+void Level2::renderCity() {
+    // Only render if city model loaded successfully
+    if (!cityModelLoaded) return;
+    
+    glPushMatrix();
+    
+    glTranslatef(cityPosition.x, cityPosition.y, cityPosition.z);
+    glRotatef(cityRotation, 0.0f, 1.0f, 0.0f);
+    glScalef(cityScale, cityScale, cityScale);
+    
+    model_city.Draw();
+    
+    glPopMatrix();
+}
+
 void Level2::initBuildings() {
     buildings.clear();
     
-    // Create a city-like layout with buildings
+    // Create buildings far from the city center (0,0,0) and airport (-800, 0, -800)
+    // Buildings will be placed in outer ring around 400-700 units from center
+    // but NOT in the direction of the airport (which is at -800, -800)
     const int numBuildings = 30;
     
     for (int i = 0; i < numBuildings; i++) {
         BuildingObstacle building;
         
-        // Distribute buildings in clusters around the map
+        // Distribute buildings in a ring around the map, avoiding city center and airport
         float angle = (float)(rand() % 360) * 3.14159f / 180.0f;
-        float distance = 150.0f + (rand() % 400);  // 150-550 units from center
+        
+        // Check if this angle points towards the airport (southwest quadrant)
+        // Airport is at -800, -800 which is around 225 degrees
+        float angleDeg = angle * 180.0f / 3.14159f;
+        
+        // Skip the southwest quadrant (180-270 degrees) to keep clear path to airport
+        if (angleDeg > 180.0f && angleDeg < 280.0f) {
+            angle += 1.57f;  // Shift by 90 degrees
+        }
+        
+        // Place buildings in outer ring (400-700 units from center)
+        // This keeps them away from city at center and leaves space for flying
+        float distance = 400.0f + (rand() % 300);  // 400-700 units from center
         
         building.position.x = cos(angle) * distance;
         building.position.y = 0.0f;  // On ground
@@ -789,13 +768,33 @@ void Level2::checkBuildingCollision() {
         if (fabs(dx) < halfWidth && fabs(dz) < halfDepth) {
             // Check height - player must be below building top
             if (playerPos.y < b.height && playerPos.y > 0) {
-                // CRASH!
+                // CRASH! Trigger explosion
                 flightSim->isCrashed = true;
                 flightSim->player.velocity = Vector3f(0, 0, 0);
                 flightSim->player.throttle = 0;
+                
+                // Trigger explosion at crash location
+                particleEffects.triggerExplosion(playerPos);
+                
+                // Also trigger game over after crash
+                gameOver = true;
+                showGameOver = true;
                 break;
             }
         }
+    }
+    
+    // Also check for ground collision (crash if altitude is 0 or below at high speed)
+    if (playerPos.y <= 0.5f && flightSim->getSpeed() > 30.0f) {
+        flightSim->isCrashed = true;
+        flightSim->player.velocity = Vector3f(0, 0, 0);
+        flightSim->player.throttle = 0;
+        
+        // Trigger explosion at crash location
+        particleEffects.triggerExplosion(playerPos);
+        
+        gameOver = true;
+        showGameOver = true;
     }
 }
 
