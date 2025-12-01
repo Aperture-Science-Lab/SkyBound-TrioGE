@@ -7,6 +7,8 @@ FlightController::FlightController() {
     // Closer camera as requested
     cameraDist = 15.0f;  // Was 30.0f
     cameraHeight = 5.0f; // Was 8.0f
+    wasCrashed = false;
+    smokeSystem.init();  // Initialize smoke particle system
 }
 
 void FlightController::reset() {
@@ -24,6 +26,8 @@ void FlightController::reset() {
     isGrounded = true; // Start grounded
     viewBobTimer = 0.0f;
     currentFOV = 45.0f;
+    wasCrashed = false;
+    smokeSystem.reset();  // Clear smoke particles on reset
 
     for(int i=0; i<256; i++) keyState[i] = false;
 }
@@ -194,6 +198,16 @@ void FlightController::update(float deltaTime) {
         // Increase frequency with speed
         viewBobTimer += deltaTime * (speed * 0.2f);
     }
+    
+    // Handle smoke particles for crash effect
+    if (isCrashed && !wasCrashed) {
+        // Just crashed - start smoke
+        smokeSystem.startSmoke(player.position);
+        wasCrashed = true;
+    }
+    
+    // Update smoke particles
+    smokeSystem.update(deltaTime);
 }
 
 void FlightController::resolveCollisions(float deltaTime) {
@@ -321,4 +335,8 @@ void FlightController::loadModel(char* path) {
         }
         loaded = true;
     }
+}
+
+void FlightController::renderSmoke() {
+    smokeSystem.render(player.position);
 }

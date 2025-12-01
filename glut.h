@@ -7,6 +7,8 @@
    provided without guarantee or warrantee expressed or  implied. This
    program is -not- in the public domain. */
 
+#include <stdlib.h>  /* For exit() declaration */
+
 #if defined(_WIN32)
 
 /* GLUT 3.7 now tries to avoid including <windows.h>
@@ -142,9 +144,7 @@ extern "C" {
 #endif
 
 #if defined(_WIN32)
-# ifndef GLUT_BUILDING_LIB
-extern _CRTIMP void __cdecl exit(int);
-# endif
+/* exit() declaration removed - provided by stdlib.h */
 #else
 /* non-Win32 case. */
 /* Define APIENTRY and CALLBACK to nothing if we aren't on Win32. */

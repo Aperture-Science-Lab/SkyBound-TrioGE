@@ -1,9 +1,10 @@
 #include "Level2.h"
 #include <glut.h>
+#include <cmath>
 
 extern void loadBMP(unsigned int* textureID, char* strFileName, int wrap);
 
-Level2::Level2() : Level(), flightSim(nullptr), tex_sky(0), screenWidth(1280), screenHeight(720), collectedCount(0), collectableTimer(0.0f) {
+Level2::Level2() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(720), collectedCount(0), collectableTimer(0.0f) {
 }
 
 Level2::~Level2() {
@@ -118,7 +119,7 @@ void Level2::loadAssets() {
     model_buildings[9].Load("Models/buildings/Residential Buildings 010.3ds");
     
     tex_ground.Load("Textures/ground.bmp");
-    loadBMP(&tex_sky, "Textures/blu-sky-3.bmp", true);
+    skySystem.init();  // Initialize sky and lens flare system
 }
 
 void Level2::update(float deltaTime) {
@@ -151,7 +152,10 @@ void Level2::render() {
         flightSim->setupCamera();
     }
     
-    renderSky();
+    // Render sky using shared SkySystem
+    if (flightSim) {
+        skySystem.renderSky(flightSim->player.position);
+    }
     
     GLfloat lightIntensity[] = { 0.7f, 0.7f, 0.7f, 1.0f };
     GLfloat lightPosition[] = { 0.0f, 100.0f, 0.0f, 0.0f };
@@ -184,32 +188,21 @@ void Level2::render() {
     model_house.Draw();
     glPopMatrix();
     
+    // Render Smoke Particles (handled by FlightController)
+    if (flightSim) {
+        flightSim->renderSmoke();
+    }
+    
+    // Render Lens Flare using shared SkySystem
+    if (flightSim) {
+        skySystem.renderLensFlare(flightSim->player.position, flightSim->player.forward, 
+                                   screenWidth, screenHeight);
+    }
+    
     // Render HUD (fuel count)
     renderHUD();
     
     glutSwapBuffers();
-}
-
-// ... [Existing RenderSky, RenderGround, Handlers stay the same] ...
-
-void Level2::renderSky() {
-    glPushMatrix();
-    GLUquadricObj* qobj;
-    qobj = gluNewQuadric();
-    if (flightSim) {
-        glTranslatef(flightSim->player.position.x, flightSim->player.position.y, flightSim->player.position.z);
-    }
-    glRotated(90, 1, 0, 1);
-    glBindTexture(GL_TEXTURE_2D, tex_sky);
-    gluQuadricTexture(qobj, true);
-    gluQuadricNormals(qobj, GL_SMOOTH);
-    glDepthMask(GL_FALSE);
-    glDisable(GL_LIGHTING);
-    gluSphere(qobj, 800, 100, 100);
-    glEnable(GL_LIGHTING);
-    glDepthMask(GL_TRUE);
-    gluDeleteQuadric(qobj);
-    glPopMatrix();
 }
 
 void Level2::renderGround() {
@@ -434,7 +427,7 @@ void Level2::renderHUD() {
     
     char buffer[64];
     int total = (int)fuelContainers.size();
-    sprintf(buffer, "Fuel: %d / %d", collectedCount, total);
+    sprintf_s(buffer, sizeof(buffer), "Fuel: %d / %d", collectedCount, total);
     
     for (char* c = buffer; *c != '\0'; c++) {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);

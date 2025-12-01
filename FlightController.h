@@ -1,9 +1,11 @@
 #pragma once
 #include <stdlib.h>
+#include "glew.h"
 #include <glut.h>
 #include <math.h>
 #include <Vector3f.h>
 #include "Model_3DS.h"
+#include "SmokeSystem.h"
 
 #define PI 3.14159265359
 #define DEG2RAD(x) ((x) * PI / 180.0f)
@@ -42,8 +44,14 @@ public:
     bool isCrashed;
     bool isGrounded;
     
+    // Smoke particle system for crash effects
+    SmokeSystem smokeSystem;
+    
     // Accessor for speed (used by Level2 for wind particles)
     float getSpeed() const;
+    
+    // Render smoke particles (call after scene rendering)
+    void renderSmoke();
 
 private:
     float cameraDist;
@@ -61,6 +69,7 @@ private:
     // Effects
     float viewBobTimer;
     float currentFOV;
+    bool wasCrashed;  // Track crash state for smoke triggering
     
     void rotateVector(Vector3f& vec, const Vector3f& axis, float angle);
     void resolveCollisions(float deltaTime);

@@ -1,4 +1,8 @@
 ﻿  Level2.cpp
-C:\Users\Victus\Documents\Sky-bound\Level2.cpp(437,5): warning C4996: 'sprintf': This function or variable may be unsafe. Consider using sprintf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+  OpenGLMeshLoader.cpp
+  FlightController.cpp
+  SmokeSystem.cpp
+  SkySystem.cpp
+  Generating Code...
 GameManager.obj : warning LNK4075: ignoring '/EDITANDCONTINUE' due to '/INCREMENTAL:NO' specification
   OpenGLMeshLoader.vcxproj -> C:\Users\Victus\Documents\Sky-bound\Debug\OpenGLMeshLoader19.exe

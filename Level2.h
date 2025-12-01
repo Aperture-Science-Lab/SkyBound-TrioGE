@@ -3,6 +3,7 @@
 #include "FlightController.h"
 #include "Model_3DS.h"
 #include "GLTexture.h"
+#include "SkySystem.h"
 #include <vector>
 
 // Forward declaration
@@ -62,7 +63,9 @@ private:
     Model_3DS model_fuelContainer;  // Fuel container model
     Model_3DS model_buildings[10];  // 10 different building models
     GLTexture tex_ground;
-    unsigned int tex_sky;
+    
+    // Sky and Lens Flare System (shared/reusable)
+    SkySystem skySystem;
     
     int screenWidth;
     int screenHeight;
@@ -90,6 +93,5 @@ private:
     void renderWindParticles();
 
     void renderGround();
-    void renderSky();
     void loadAssets();
 };
