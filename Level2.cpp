@@ -611,7 +611,7 @@ void Level2::handleKeyboard(unsigned char key, bool pressed) {
     if (!active) return;
     if (key == 27) exit(0);
     
-    // Reset key - also reset crash and sound systems
+    // Reset key - full game reset including plane
     if ((key == 'r' || key == 'R') && pressed) {
         crashSystem.reset();
         soundSystem.reset();
@@ -624,6 +624,23 @@ void Level2::handleKeyboard(unsigned char key, bool pressed) {
         showWinMessage = false;
         hasTouchedDown = false;
         touchdownLocalZ = 0.0f;
+        winMessageTimer = 0.0f;
+        
+        // Reinitialize fuel containers
+        initFuelContainers();
+        
+        // Reset plane - spawn on runway
+        if (flightSim) {
+            flightSim->reset();
+            flightSim->player.position = Vector3f(-800.0f, 0.5f, -800.0f);
+            flightSim->player.forward = Vector3f(0, 0, 1);
+            flightSim->player.up = Vector3f(0, 1, 0);
+            flightSim->player.right = Vector3f(1, 0, 0);
+            flightSim->player.velocity = Vector3f(0, 0, 0);
+            flightSim->player.throttle = 0.0f;
+            flightSim->isGrounded = true;
+            flightSim->isCrashed = false;
+        }
     }
     
     // Shooting - Space key to fire

@@ -39,6 +39,7 @@ public:
     
     FlightPlayer player;
     Model_3DS model;
+    bool modelLoaded;  // Track if model is loaded for THIS instance
     
     bool keyState[256];
     int cameraMode;

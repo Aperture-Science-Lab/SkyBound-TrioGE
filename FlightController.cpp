@@ -3,6 +3,7 @@
 #include <iostream>
 
 FlightController::FlightController() {
+    modelLoaded = false;  // Model needs to be loaded for this instance
     reset();
     // Closer camera as requested
     cameraDist = 15.0f;  // Was 30.0f
@@ -423,16 +424,14 @@ void FlightController::renderWingLights() {
 }
 
 void FlightController::loadModel(char* path) {
-    // Optimization: Check if already loaded to prevent reloading every frame
-    // (Assuming Model_3DS has a check, otherwise this should be done in Init)
-    static bool loaded = false;
-    if(!loaded) {
+    // Load model for THIS instance (not static to allow multiple FlightController instances)
+    if(!modelLoaded) {
         model.Load(path);
         for (int i = 0; i < model.numMaterials; i++) {
             model.Materials[i].tex.Load("models/plane/mitsubishi_a6m2_zero_texture.bmp");
             model.Materials[i].textured = true;
         }
-        loaded = true;
+        modelLoaded = true;
     }
 }
 
