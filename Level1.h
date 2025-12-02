@@ -8,6 +8,7 @@
 #include "CrashSystem.h"
 #include "SoundSystem.h"
 #include "ShadowSystem.h"
+#include "ShootingSystem.h"
 #include <vector>
 
 // Forward declaration
@@ -142,6 +143,13 @@ private:
     // Shadow System
     ShadowSystem shadowSystem;
     void renderShadows();
+    
+    // Shooting System
+    ShootingSystem shootingSystem;
+    void checkBulletRocketCollision();
+    
+    // Port lights (turn on at night)
+    void renderPortLights();
     
     // HUD and UI
     void renderHUD();

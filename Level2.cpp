@@ -652,6 +652,39 @@ void Level2::onEnter() {
     screenWidth = glutGet(GLUT_WINDOW_WIDTH);
     screenHeight = glutGet(GLUT_WINDOW_HEIGHT);
     glutSetCursor(GLUT_CURSOR_NONE);
+    
+    // Reset ALL game state when entering Level 2 (important for level transitions)
+    gameTimer = maxGameTime;
+    score = 0;
+    gameOver = false;
+    showGameOver = false;
+    hasLanded = false;
+    showWinMessage = false;
+    hasTouchedDown = false;
+    touchdownLocalZ = 0.0f;
+    winMessageTimer = 0.0f;
+    
+    // Reset systems
+    crashSystem.reset();
+    soundSystem.reset();
+    shootingSystem.reset();
+    
+    // Reinitialize collectables
+    initFuelContainers();
+    
+    // Reset plane state
+    if (flightSim) {
+        flightSim->reset();
+        // Start on ground at runway for Level 2
+        flightSim->player.position = Vector3f(-800.0f, 0.5f, -800.0f);
+        flightSim->player.forward = Vector3f(0, 0, 1);
+        flightSim->player.up = Vector3f(0, 1, 0);
+        flightSim->player.right = Vector3f(1, 0, 0);
+        flightSim->player.velocity = Vector3f(0, 0, 0);
+        flightSim->player.throttle = 0.0f;
+        flightSim->isGrounded = true;
+        flightSim->isCrashed = false;
+    }
 }
 
 void Level2::onExit() {

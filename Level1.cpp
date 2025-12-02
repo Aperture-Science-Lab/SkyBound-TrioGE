@@ -111,17 +111,17 @@ static bool loadGroundTexture(GLuint* texID, const char* filename) {
 
 Level1::Level1() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(720),
     collectedCount(0), collectableTimer(0.0f), ringsPassedCount(0), totalRings(10),
-    ringTimer(0.0f), gameTimer(0.0f), maxGameTime(180.0f), score(0),
+    ringTimer(0.0f), gameTimer(0.0f), maxGameTime(600.0f), score(0),
     gameOver(false), showGameOver(false), levelComplete(false), showLevelComplete(false),
     levelCompleteTimer(0.0f), tex_water(0), tex_concrete(0),
     rocketSpawnTimer(0.0f), rocketSpawnInterval(5.0f),
     waterLevel(-2.0f), portHeight(3.0f),
     spawnProtectionTimer(3.0f), hasSpawnProtection(true) {
     
-    // Aircraft carrier positioned in water - much smaller scale
-    carrierPosition = Vector3f(0.0f, -1.0f, -100.0f);  // Behind spawn point
+    // Aircraft carrier positioned in water - raised up
+    carrierPosition = Vector3f(0.0f, 50.0f, -100.0f);  // Raised above water
     carrierRotation = 0.0f;
-    carrierScale = 0.002f;  // Even smaller scale
+    carrierScale = 0.001f;  // Appropriate scale
 }
 
 Level1::~Level1() {
@@ -151,6 +151,7 @@ void Level1::init() {
     crashSystem.init();
     soundSystem.init();
     shadowSystem.init();
+    shootingSystem.init();  // Initialize shooting system
     initRings();
     initToolkits();
     initRockets();
@@ -340,6 +341,9 @@ void Level1::update(float deltaTime) {
         particleEffects.update(deltaTime, flightSim->player.position,
                                flightSim->player.forward, flightSim->getSpeed());
         
+        // Update shooting system
+        shootingSystem.update(deltaTime);
+        
         // Update game elements
         updateRings(deltaTime);
         updateToolkits(deltaTime);
@@ -348,6 +352,7 @@ void Level1::update(float deltaTime) {
         // Check collisions (rocket collisions only if not spawn protected)
         checkRingPassage();
         checkToolkitCollision();
+        checkBulletRocketCollision();  // Check if bullets hit rockets
         if (!hasSpawnProtection) {
             checkRocketCollision();
         }
@@ -510,6 +515,102 @@ void Level1::checkRocketCollision() {
     }
 }
 
+void Level1::checkBulletRocketCollision() {
+    // Check if any bullets hit any rockets - if so, explode the rocket
+    float hitRadius = 8.0f;  // Collision radius for bullet-rocket
+    
+    // Get bullets from shooting system (need to access internal data)
+    // Since ShootingSystem doesn't expose bullets directly, we'll check manually
+    // by iterating over rockets and checking distance to recent bullet positions
+    
+    for (auto& rocket : rockets) {
+        if (!rocket.active) continue;
+        
+        // Check against shooting system's bullets
+        // The shooting system handles its own bullet lifecycle, so we spawn an explosion
+        // when a rocket is hit and deactivate it
+        
+        // For simplicity, we use a raycast approximation based on player position and forward
+        if (flightSim && shootingSystem.getActiveBulletCount() > 0) {
+            // Get approximate bullet positions (bullets travel fast in forward direction)
+            Vector3f bulletStart = flightSim->player.position;
+            Vector3f bulletDir = flightSim->player.forward;
+            
+            // Check several positions along bullet path
+            for (float t = 0; t < 200.0f; t += 10.0f) {
+                Vector3f bulletPos = bulletStart + bulletDir * t;
+                
+                float dx = bulletPos.x - rocket.position.x;
+                float dy = bulletPos.y - rocket.position.y;
+                float dz = bulletPos.z - rocket.position.z;
+                float distSq = dx * dx + dy * dy + dz * dz;
+                
+                if (distSq < hitRadius * hitRadius) {
+                    // Bullet hit rocket - explode!
+                    rocket.active = false;
+                    score += 200;  // Bonus for shooting down rocket
+                    // Trigger explosion at rocket position
+                    crashSystem.triggerCrash(rocket.position);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void Level1::renderPortLights() {
+    // Only render lights at night
+    if (!skySystem.isNightTime()) return;
+    
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending for glow
+    
+    float portX = 400.0f;
+    float lightY = portHeight + 5.0f;
+    
+    // Pulsing effect
+    float pulse = 0.7f + 0.3f * sin(ringTimer * 2.0f);
+    
+    // Place lights along the port edge
+    for (float z = -600.0f; z <= 600.0f; z += 100.0f) {
+        // Light post (simple cylinder approximation)
+        glColor3f(0.3f, 0.3f, 0.35f);
+        glPushMatrix();
+        glTranslatef(portX + 10.0f, portHeight, z);
+        glScalef(1.0f, 5.0f, 1.0f);
+        glutSolidCube(2.0f);
+        glPopMatrix();
+        
+        // Light glow (yellow/orange)
+        glColor4f(1.0f, 0.9f, 0.5f, 0.8f * pulse);
+        glPushMatrix();
+        glTranslatef(portX + 10.0f, lightY, z);
+        glutSolidSphere(2.0f, 8, 8);
+        glPopMatrix();
+        
+        // Light halo
+        glColor4f(1.0f, 0.8f, 0.4f, 0.3f * pulse);
+        glPushMatrix();
+        glTranslatef(portX + 10.0f, lightY, z);
+        glutSolidSphere(5.0f, 8, 8);
+        glPopMatrix();
+    }
+    
+    // Also add some lights on the carrier
+    glColor4f(0.8f, 0.2f, 0.2f, 0.9f * pulse);  // Red warning lights
+    for (float offset = -20.0f; offset <= 20.0f; offset += 10.0f) {
+        glPushMatrix();
+        glTranslatef(carrierPosition.x + offset, carrierPosition.y + 8.0f, carrierPosition.z);
+        glutSolidSphere(1.5f, 6, 6);
+        glPopMatrix();
+    }
+    
+    glDisable(GL_BLEND);
+    glEnable(GL_LIGHTING);
+}
+
 bool Level1::isOnCarrierDeck(const Vector3f& pos) {
     // Carrier deck bounds (adjusted for new scale and position)
     // With scale 0.015, the carrier is much smaller
@@ -591,6 +692,15 @@ void Level1::render() {
     renderToolkits();
     renderRockets();
     
+    // Render bullets and explosions from shooting system
+    shootingSystem.renderBullets();
+    if (flightSim) {
+        shootingSystem.renderExplosions(flightSim->player.position);
+    }
+    
+    // Render port lights (turn on at night)
+    renderPortLights();
+    
     // Render crash effects
     if (flightSim) {
         crashSystem.render(flightSim->player.position);
@@ -622,30 +732,82 @@ void Level1::renderWater() {
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex_water);
     glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
     float size = 2000.0f;
-    float px = 0, pz = 0;
-    if (flightSim) {
-        px = flightSim->player.position.x;
-        pz = flightSim->player.position.z;
-    }
+    float texScale = 0.003f;
     
-    // Water on the left side (sea)
-    glColor3f(0.3f, 0.5f, 0.8f);
+    // Animated texture offset - slides the water texture
+    float timeOffset = ringTimer * 0.05f;  // Slow sliding motion
+    float waveOffset = sin(ringTimer * 0.3f) * 0.02f;  // Gentle wave motion
+    
+    // Multiple water layers for depth effect
+    // Layer 1: Deep water (darker, slower)
+    glColor4f(0.1f, 0.25f, 0.5f, 1.0f);
     glBegin(GL_QUADS);
-    float texScale = 0.01f;
-    
-    // Large water area
-    glTexCoord2f(0, 0);
-    glVertex3f(px - size, waterLevel, pz - size);
-    glTexCoord2f(size * texScale, 0);
-    glVertex3f(px + size * 0.3f, waterLevel, pz - size);  // Water on left side
-    glTexCoord2f(size * texScale, size * texScale * 2);
-    glVertex3f(px + size * 0.3f, waterLevel, pz + size);
-    glTexCoord2f(0, size * texScale * 2);
-    glVertex3f(px - size, waterLevel, pz + size);
+    float offset1 = timeOffset * 0.3f;
+    glTexCoord2f(offset1, offset1 + waveOffset);
+    glVertex3f(-size, waterLevel - 0.5f, -size);
+    glTexCoord2f(size * texScale * 2 + offset1, offset1 + waveOffset);
+    glVertex3f(size, waterLevel - 0.5f, -size);
+    glTexCoord2f(size * texScale * 2 + offset1, size * texScale * 2 + offset1 - waveOffset);
+    glVertex3f(size, waterLevel - 0.5f, size);
+    glTexCoord2f(offset1, size * texScale * 2 + offset1 - waveOffset);
+    glVertex3f(-size, waterLevel - 0.5f, size);
     glEnd();
     
+    // Layer 2: Main water surface (medium blue, main animation)
+    glColor4f(0.15f, 0.4f, 0.7f, 0.9f);
+    glBegin(GL_QUADS);
+    float offset2 = timeOffset + waveOffset;
+    glTexCoord2f(offset2, -offset2 * 0.5f);
+    glVertex3f(-size, waterLevel, -size);
+    glTexCoord2f(size * texScale * 2 + offset2, -offset2 * 0.5f);
+    glVertex3f(size, waterLevel, -size);
+    glTexCoord2f(size * texScale * 2 + offset2, size * texScale * 2 - offset2 * 0.5f);
+    glVertex3f(size, waterLevel, size);
+    glTexCoord2f(offset2, size * texScale * 2 - offset2 * 0.5f);
+    glVertex3f(-size, waterLevel, size);
+    glEnd();
+    
+    // Layer 3: Surface highlights (lighter, faster, more transparent)
+    glColor4f(0.3f, 0.55f, 0.85f, 0.4f);
+    glBegin(GL_QUADS);
+    float offset3 = timeOffset * 1.5f - waveOffset * 2.0f;
+    float texScale2 = texScale * 1.5f;  // Different scale for variety
+    glTexCoord2f(-offset3, offset3 * 0.7f);
+    glVertex3f(-size, waterLevel + 0.1f, -size);
+    glTexCoord2f(size * texScale2 * 2 - offset3, offset3 * 0.7f);
+    glVertex3f(size, waterLevel + 0.1f, -size);
+    glTexCoord2f(size * texScale2 * 2 - offset3, size * texScale2 * 2 + offset3 * 0.7f);
+    glVertex3f(size, waterLevel + 0.1f, size);
+    glTexCoord2f(-offset3, size * texScale2 * 2 + offset3 * 0.7f);
+    glVertex3f(-size, waterLevel + 0.1f, size);
+    glEnd();
+    
+    // Foam/whitecap layer near carrier (extra detail)
+    if (flightSim) {
+        float px = flightSim->player.position.x;
+        float pz = flightSim->player.position.z;
+        float foamSize = 300.0f;
+        float foamPulse = 0.3f + 0.1f * sin(ringTimer * 2.0f);
+        
+        glColor4f(0.7f, 0.8f, 0.9f, foamPulse);
+        glBegin(GL_QUADS);
+        float foamOffset = timeOffset * 2.0f;
+        glTexCoord2f(foamOffset, foamOffset);
+        glVertex3f(px - foamSize, waterLevel + 0.2f, pz - foamSize);
+        glTexCoord2f(foamOffset + 2.0f, foamOffset);
+        glVertex3f(px + foamSize, waterLevel + 0.2f, pz - foamSize);
+        glTexCoord2f(foamOffset + 2.0f, foamOffset + 2.0f);
+        glVertex3f(px + foamSize, waterLevel + 0.2f, pz + foamSize);
+        glTexCoord2f(foamOffset, foamOffset + 2.0f);
+        glVertex3f(px - foamSize, waterLevel + 0.2f, pz + foamSize);
+        glEnd();
+    }
+    
+    glDisable(GL_BLEND);
     glEnable(GL_LIGHTING);
 }
 
@@ -654,36 +816,32 @@ void Level1::renderPort() {
     glBindTexture(GL_TEXTURE_2D, tex_concrete);
     glDisable(GL_LIGHTING);
     
-    float size = 2000.0f;
-    float px = 0, pz = 0;
-    if (flightSim) {
-        px = flightSim->player.position.x;
-        pz = flightSim->player.position.z;
-    }
+    float size = 800.0f;
+    float portX = 400.0f;  // Port is on the right side
     
-    // Port/dock on the right side (higher than water)
-    glColor3f(0.7f, 0.7f, 0.7f);
+    // Port/dock platform (concrete)
+    glColor3f(0.6f, 0.6f, 0.65f);
     glBegin(GL_QUADS);
-    float texScale = 0.02f;
+    float texScale = 0.01f;
     
-    // Port concrete area (right side, higher)
+    // Main port concrete area
     glTexCoord2f(0, 0);
-    glVertex3f(px + size * 0.3f, portHeight, pz - size);
+    glVertex3f(portX, portHeight, -size);
     glTexCoord2f(size * texScale, 0);
-    glVertex3f(px + size, portHeight, pz - size);
+    glVertex3f(portX + size, portHeight, -size);
     glTexCoord2f(size * texScale, size * texScale * 2);
-    glVertex3f(px + size, portHeight, pz + size);
+    glVertex3f(portX + size, portHeight, size);
     glTexCoord2f(0, size * texScale * 2);
-    glVertex3f(px + size * 0.3f, portHeight, pz + size);
+    glVertex3f(portX, portHeight, size);
     glEnd();
     
-    // Port edge (wall between water and port)
-    glColor3f(0.5f, 0.5f, 0.5f);
+    // Port edge wall (between water and port)
+    glColor3f(0.4f, 0.4f, 0.45f);
     glBegin(GL_QUADS);
-    glVertex3f(px + size * 0.3f, waterLevel, pz - size);
-    glVertex3f(px + size * 0.3f, portHeight, pz - size);
-    glVertex3f(px + size * 0.3f, portHeight, pz + size);
-    glVertex3f(px + size * 0.3f, waterLevel, pz + size);
+    glVertex3f(portX, waterLevel, -size);
+    glVertex3f(portX, portHeight, -size);
+    glVertex3f(portX, portHeight, size);
+    glVertex3f(portX, waterLevel, size);
     glEnd();
     
     glEnable(GL_LIGHTING);
@@ -695,6 +853,11 @@ void Level1::renderCarrier() {
     glTranslatef(carrierPosition.x, carrierPosition.y, carrierPosition.z);
     glRotatef(carrierRotation, 0, 1, 0);
     glScalef(carrierScale, carrierScale, carrierScale);
+    
+    // Apply gray concrete-like color to carrier
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex_concrete);
+    glColor3f(0.5f, 0.5f, 0.55f);  // Gray color
     
     // Draw the carrier model
     model_carrier.Draw();
@@ -777,13 +940,27 @@ void Level1::renderToolkits() {
         
         glPushMatrix();
         
-        // Bob up and down
-        float bob = sin(collectableTimer * 2.0f + tk.bobOffset) * 2.0f;
+        // Bob up and down like fuel containers
+        float bob = sin(collectableTimer * 2.0f + tk.bobOffset) * 3.0f;
         glTranslatef(tk.position.x, tk.position.y + bob, tk.position.z);
-        glRotatef(tk.rotationAngle, 0, 1, 0);
-        glScalef(0.5f, 0.5f, 0.5f);  // Scale wrench model
+        
+        // Rotate around Y axis (spinning)
+        float spin = tk.rotationAngle + collectableTimer * 60.0f;  // Continuous spin
+        glRotatef(spin, 0, 1, 0);
+        
+        // Larger scale for better visibility
+        glScalef(2.5f, 2.5f, 2.5f);
+        
+        // Add glow effect for visibility
+        float glowPulse = 0.5f + 0.5f * sin(collectableTimer * 3.0f + tk.bobOffset);
+        float glowColor[] = { 1.0f * glowPulse, 0.8f * glowPulse, 0.2f * glowPulse, 1.0f };
+        glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, glowColor);
         
         model_wrench.Draw();
+        
+        // Reset emission
+        float noEmission[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+        glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, noEmission);
         
         glPopMatrix();
     }
@@ -1147,6 +1324,7 @@ void Level1::handleKeyboard(unsigned char key, bool pressed) {
         initRings();
         initToolkits();
         initRockets();
+        shootingSystem.reset();  // Reset shooting system
         
         // Reset plane - start in the air
         if (flightSim) {
@@ -1159,6 +1337,11 @@ void Level1::handleKeyboard(unsigned char key, bool pressed) {
             flightSim->isGrounded = false;
             flightSim->isCrashed = false;
         }
+    }
+    
+    // Shooting - Space key to fire
+    if (key == ' ' && pressed && flightSim && !gameOver && !levelComplete) {
+        shootingSystem.fire(flightSim->player.position, flightSim->player.forward);
     }
     
     if (flightSim) flightSim->handleInput(key, pressed);
