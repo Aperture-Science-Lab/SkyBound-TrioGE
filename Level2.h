@@ -7,6 +7,8 @@
 #include "ParticleEffects.h"
 #include "CrashSystem.h"
 #include "SoundSystem.h"
+#include "ShadowSystem.h"
+#include "ShootingSystem.h"
 #include <vector>
 
 // Forward declaration
@@ -56,20 +58,27 @@ private:
     Model_3DS model_tree;
     Model_3DS model_fuelContainer;  // Fuel container model
     Model_3DS model_buildings[10];  // 10 different building models
-    Model_3DS model_airport;        // Airport runway model
-    Model_3DS model_city;           // City model with buildings
-    bool cityModelLoaded;           // Flag to track if city loaded successfully
+    Model_3DS model_airportTerminal; // Airport terminal model
+    GLuint tex_airportTerminal;      // Airport terminal texture
     GLTexture tex_ground;
+    GLuint tex_runway;              // Runway texture
+    GLuint tex_grass;               // Grass billboard texture
+    
+    // Optimized Billboard Grass System (no 3D models - much faster)
+    static const int GRASS_GRID_SIZE = 12;      // Grid cells around player (reduced)
+    static const int GRASS_PER_CELL = 2;        // Grass patches per cell
+    float grassRenderDistance;                   // Max render distance
+    float grassCellSize;                         // Size of each grid cell
+    void renderGrass();
     
     // Particle Effects System (shared between levels)
     ParticleEffects particleEffects;
     
-    // City Model System
-    Vector3f cityPosition;
-    float cityRotation;
-    float cityScale;
-    void initCity();
-    void renderCity();
+    // Airport Terminal
+    Vector3f terminalPosition;
+    float terminalRotation;
+    float terminalScale;
+    void renderAirportTerminal();
     
     // Sky and Lens Flare System (shared/reusable)
     SkySystem skySystem;
@@ -77,18 +86,23 @@ private:
     int screenWidth;
     int screenHeight;
     
-    // Airport/Landing Target System
-    Vector3f airportPosition;
-    float airportRotation;
-    float airportScale;
+    // Airport/Landing Target System - Realistic Runway
+    Vector3f runwayPosition;        // Center of runway
+    float runwayRotation;           // Runway heading (degrees)
+    float runwayLength;             // Length of runway
+    float runwayWidth;              // Width of runway
     float arrowBobOffset;           // For arrow animation
     bool hasLanded;                 // Win condition
     bool showWinMessage;
     float winMessageTimer;
     float runwayLightTimer;         // Timer for runway light animation
+    bool hasTouchedDown;            // Track if plane touched down on runway
+    float touchdownLocalZ;          // Local Z position where plane touched down
     void initAirport();
-    void renderAirport();
-    void renderRunwayLights(bool isNight);  // Render runway indicator lights
+    void renderAirport();           // Renders textured runway primitive
+    void renderRunwayMarkings();    // White runway markings
+    void renderRunwayLights(bool isNight);  // Runway indicator lights
+    void renderPAPI(bool isNight);  // Precision Approach Path Indicator
     void renderTargetArrow();
     void checkLandingCondition();
     void renderWinScreen();
@@ -108,6 +122,13 @@ private:
     
     // Sound System (idle + flying + crash sounds)
     SoundSystem soundSystem;
+    
+    // Shadow System (blob shadows + ambient occlusion)
+    ShadowSystem shadowSystem;
+    void renderShadows();
+    
+    // Shooting System (bullets + ground explosions)
+    ShootingSystem shootingSystem;
     
     // Building Obstacle System
     std::vector<BuildingObstacle> buildings;

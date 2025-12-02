@@ -132,13 +132,15 @@ Level2::Level2() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(
     collectedCount(0), collectableTimer(0.0f), arrowBobOffset(0.0f), 
     hasLanded(false), showWinMessage(false), winMessageTimer(0.0f),
     gameTimer(0.0f), maxGameTime(300.0f), score(0), landingBonus(0),
-    gameOver(false), showGameOver(false), cityModelLoaded(false), runwayLightTimer(0.0f) {
-    airportPosition = Vector3f(0, 0, 0);
-    airportRotation = 0.0f;
-    airportScale = 1.0f;
-    cityPosition = Vector3f(0, 0, 0);
-    cityRotation = 0.0f;
-    cityScale = 1.0f;
+    gameOver(false), showGameOver(false), runwayLightTimer(0.0f),
+    tex_runway(0), tex_airportTerminal(0), runwayLength(700.0f), runwayWidth(50.0f),
+    hasTouchedDown(false), touchdownLocalZ(0.0f), tex_grass(0),
+    grassRenderDistance(80.0f), grassCellSize(20.0f) {
+    runwayPosition = Vector3f(-800.0f, 0.05f, -800.0f);
+    runwayRotation = 30.0f;
+    terminalPosition = Vector3f(-1260.0f, 0.0f, -440.0f);  // Near runway
+    terminalRotation = 30.0f;  // Match runway heading
+    terminalScale = 0.01f;  // Much smaller size
 }
 
 Level2::~Level2() {
@@ -151,9 +153,10 @@ void Level2::init() {
     particleEffects.init();   // Initialize particle effects system (wind)
     crashSystem.init();       // Initialize unified crash system (explosion + smoke + sound)
     soundSystem.init();       // Initialize sound system (idle + flying sounds)
+    shadowSystem.init();      // Initialize shadow system
+    shootingSystem.init();    // Initialize shooting system
     initFuelContainers();     // Initialize fuel collectables
-    initCity();               // Initialize city model (before buildings!)
-    initBuildings();          // Initialize building obstacles (away from city)
+    initBuildings();          // Initialize building obstacles
     initAirport();            // Initialize airport landing target
     
     // Initialize game timer and score
@@ -168,6 +171,29 @@ void Level2::loadAssets() {
     model_tree.Load("Models/tree/Tree1.3ds");
     model_fuelContainer.Load("Models/fuel container/Container Gas  N250815.3DS");
     
+    // Create simple green grass texture (procedural)
+    glGenTextures(1, &tex_grass);
+    glBindTexture(GL_TEXTURE_2D, tex_grass);
+    unsigned char grassTex[16 * 16 * 4];
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+            int idx = (y * 16 + x) * 4;
+            // Grass blade shape - transparent on sides, green in middle
+            float centerDist = fabs(x - 7.5f) / 7.5f;
+            float heightFade = (float)y / 15.0f;  // Fade at top
+            bool isGrass = (centerDist < 0.3f + heightFade * 0.4f) && (rand() % 100 > 20);
+            grassTex[idx + 0] = 40 + rand() % 40;   // R
+            grassTex[idx + 1] = 120 + rand() % 60;  // G
+            grassTex[idx + 2] = 30 + rand() % 30;   // B
+            grassTex[idx + 3] = isGrass ? 255 : 0;  // A
+        }
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, grassTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    
     // Load building models
     model_buildings[0].Load("Models/buildings/Residential Buildings 001.3ds");
     model_buildings[1].Load("Models/buildings/Residential Buildings 002.3ds");
@@ -180,12 +206,24 @@ void Level2::loadAssets() {
     model_buildings[8].Load("Models/buildings/Residential Buildings 009.3ds");
     model_buildings[9].Load("Models/buildings/Residential Buildings 010.3ds");
     
-    // Load airport model
-    model_airport.Load("Models/newairport/Airport Model.3ds");
+    // Load runway texture
+    if (!loadGroundTexture(&tex_runway, "textures/runway.bmp")) {
+        if (!loadGroundTexture(&tex_runway, "../textures/runway.bmp")) {
+            // Create a dark gray fallback texture for runway
+            glGenTextures(1, &tex_runway);
+            glBindTexture(GL_TEXTURE_2D, tex_runway);
+            unsigned char gray[3] = { 60, 60, 65 };
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, gray);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+    }
     
-    // Load city model (may fail if file is corrupt/missing - that's OK)
-    model_city.Load("Models/city/CITY+BUILDINGS.3ds");
-    cityModelLoaded = model_city.visible;  // Track if it loaded successfully
+    // Load airport terminal model and texture
+    model_airportTerminal.Load("Models/airport terminal/3d-model.3ds");
+    if (!loadGroundTexture(&tex_airportTerminal, "Models/airport terminal/AussenWand_C.bmp")) {
+        loadGroundTexture(&tex_airportTerminal, "../Models/airport terminal/AussenWand_C.bmp");
+    }
     
     // Try to load ground texture using custom loader
     if (!loadGroundTexture(&tex_ground.texture[0], "../textures/grassGround.bmp")) {
@@ -266,6 +304,9 @@ void Level2::update(float deltaTime) {
         particleEffects.update(deltaTime, flightSim->player.position, 
                                flightSim->player.forward, flightSim->getSpeed());
         
+        // Update shooting system
+        shootingSystem.update(deltaTime);
+        
         updateFuelContainers(deltaTime); // Update fuel containers
         checkFuelCollision(); // Check for collection
         checkBuildingCollision(); // Check for building crashes
@@ -295,6 +336,8 @@ void Level2::render() {
     // Render sky using shared SkySystem
     if (flightSim) {
         skySystem.renderSky(flightSim->player.position);
+        // Render billboard clouds
+        skySystem.renderClouds(flightSim->player.position);
     }
     
     GLfloat lightIntensity[] = { 0.7f, 0.7f, 0.7f, 1.0f };
@@ -302,7 +345,28 @@ void Level2::render() {
     glLightfv(GL_LIGHT0, GL_POSITION, lightPosition);
     glLightfv(GL_LIGHT0, GL_AMBIENT, lightIntensity);
     
+    // Update shadow system light direction based on time of day
+    DayLighting lighting = skySystem.getCurrentLighting();
+    Vector3f shadowLightDir(0.3f, -0.9f, 0.2f);
+    if (lighting.sunHeight > 0) {
+        shadowLightDir.y = -lighting.sunHeight;
+    }
+    shadowSystem.setLightDirection(shadowLightDir);
+    
+    // Adjust shadow darkness based on time of day
+    if (skySystem.isNightTime()) {
+        shadowSystem.setShadowDarkness(0.15f);  // Very subtle shadows at night
+    } else {
+        shadowSystem.setShadowDarkness(0.4f);   // Normal shadows during day
+    }
+    
     renderGround();
+    
+    // Render optimized grass around camera
+    renderGrass();
+    
+    // Render shadows first (before objects, onto ground)
+    renderShadows();
     
     if (flightSim) {
         // Draw plane with wing lights at night
@@ -320,12 +384,14 @@ void Level2::render() {
     // Render Buildings
     renderBuildings();
     
-    // Render City Model
-    renderCity();
+    // Render Airport Terminal
+    renderAirportTerminal();
     
-    // Render Airport and Target Arrow
+    // Render Runway (textured primitive with markings)
     renderAirport();
-    renderRunwayLights(skySystem.isNightTime());  // Runway lights only visible at night
+    renderRunwayMarkings();
+    renderPAPI(skySystem.isNightTime());
+    renderRunwayLights(skySystem.isNightTime());
     renderTargetArrow();
     
     glPushMatrix();
@@ -342,6 +408,12 @@ void Level2::render() {
     // Render Crash Effects (explosion + smoke) using unified CrashSystem
     if (flightSim) {
         crashSystem.render(flightSim->player.position);
+    }
+    
+    // Render bullets and ground explosions from shooting system
+    shootingSystem.renderBullets();
+    if (flightSim) {
+        shootingSystem.renderExplosions(flightSim->player.position);
     }
     
     // Render Lens Flare using shared SkySystem
@@ -418,6 +490,123 @@ void Level2::renderGround() {
     glColor3f(1, 1, 1);
 }
 
+// Optimized grass rendering - uses simple billboard quads instead of 3D models
+void Level2::renderGrass() {
+    if (!flightSim) return;
+    
+    Vector3f camPos = flightSim->player.position;
+    
+    // Don't render grass if too high (optimization) - grass not visible from altitude
+    if (camPos.y > 40.0f) return;
+    
+    // Dynamic render distance based on altitude
+    float dynamicRenderDist = grassRenderDistance;
+    if (camPos.y > 20.0f) {
+        dynamicRenderDist *= 0.6f;
+    }
+    
+    // Calculate grid bounds around camera
+    int gridHalf = GRASS_GRID_SIZE / 2;
+    int camCellX = (int)floor(camPos.x / grassCellSize);
+    int camCellZ = (int)floor(camPos.z / grassCellSize);
+    
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    
+    // Setup for billboard grass rendering
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex_grass);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.5f);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    
+    // Get camera right vector for billboarding
+    float modelview[16];
+    glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
+    Vector3f camRight(modelview[0], modelview[4], modelview[8]);
+    
+    int grassRendered = 0;
+    const int MAX_GRASS = 80;  // Reduced limit for performance
+    
+    glBegin(GL_QUADS);  // Batch all grass in one draw call
+    
+    // Iterate through grid cells around camera
+    for (int gz = -gridHalf; gz <= gridHalf && grassRendered < MAX_GRASS; gz++) {
+        for (int gx = -gridHalf; gx <= gridHalf && grassRendered < MAX_GRASS; gx++) {
+            int cellX = camCellX + gx;
+            int cellZ = camCellZ + gz;
+            
+            // Cell world position (center)
+            float cellWorldX = cellX * grassCellSize + grassCellSize * 0.5f;
+            float cellWorldZ = cellZ * grassCellSize + grassCellSize * 0.5f;
+            
+            // Quick distance check for culling
+            float dx = cellWorldX - camPos.x;
+            float dz = cellWorldZ - camPos.z;
+            float distSq = dx * dx + dz * dz;
+            
+            if (distSq > dynamicRenderDist * dynamicRenderDist) continue;
+            
+            // Use cell coordinates as seed for deterministic random placement
+            unsigned int seed = (unsigned int)(cellX * 73856093) ^ (unsigned int)(cellZ * 19349663);
+            
+            // Render grass patches in this cell
+            for (int i = 0; i < GRASS_PER_CELL && grassRendered < MAX_GRASS; i++) {
+                // Deterministic pseudo-random position within cell
+                seed = seed * 1103515245 + 12345;
+                float offsetX = ((seed >> 16) & 0x7FFF) / 32767.0f * grassCellSize;
+                seed = seed * 1103515245 + 12345;
+                float offsetZ = ((seed >> 16) & 0x7FFF) / 32767.0f * grassCellSize;
+                seed = seed * 1103515245 + 12345;
+                float grassHeight = 1.5f + ((seed >> 16) & 0x7FFF) / 32767.0f * 1.0f;  // Height 1.5-2.5
+                seed = seed * 1103515245 + 12345;
+                float grassWidth = 0.8f + ((seed >> 16) & 0x7FFF) / 32767.0f * 0.6f;  // Width 0.8-1.4
+                
+                float grassX = cellX * grassCellSize + offsetX;
+                float grassZ = cellZ * grassCellSize + offsetZ;
+                
+                // Skip grass on runway area
+                float rdx = grassX - runwayPosition.x;
+                float rdz = grassZ - runwayPosition.z;
+                if (rdx * rdx + rdz * rdz < 14400.0f) continue;  // Skip within 120 units of runway
+                
+                // Distance-based alpha fade
+                float dist = sqrt(distSq);
+                float alpha = 1.0f;
+                if (dist > dynamicRenderDist * 0.6f) {
+                    alpha = 1.0f - (dist - dynamicRenderDist * 0.6f) / (dynamicRenderDist * 0.4f);
+                }
+                
+                // Slight color variation
+                float colorVar = 0.8f + ((seed >> 8) & 0xFF) / 255.0f * 0.4f;
+                glColor4f(0.3f * colorVar, 0.6f * colorVar, 0.2f * colorVar, alpha);
+                
+                // Billboard quad vertices (cross pattern for 3D look)
+                float hw = grassWidth * 0.5f;
+                
+                // First quad (aligned with X)
+                glTexCoord2f(0, 0); glVertex3f(grassX - hw, 0.0f, grassZ);
+                glTexCoord2f(1, 0); glVertex3f(grassX + hw, 0.0f, grassZ);
+                glTexCoord2f(1, 1); glVertex3f(grassX + hw, grassHeight, grassZ);
+                glTexCoord2f(0, 1); glVertex3f(grassX - hw, grassHeight, grassZ);
+                
+                // Second quad (aligned with Z) - creates X pattern
+                glTexCoord2f(0, 0); glVertex3f(grassX, 0.0f, grassZ - hw);
+                glTexCoord2f(1, 0); glVertex3f(grassX, 0.0f, grassZ + hw);
+                glTexCoord2f(1, 1); glVertex3f(grassX, grassHeight, grassZ + hw);
+                glTexCoord2f(0, 1); glVertex3f(grassX, grassHeight, grassZ - hw);
+                
+                grassRendered++;
+            }
+        }
+    }
+    
+    glEnd();  // End batched grass quads
+    glPopAttrib();
+}
+
 void Level2::handleKeyboard(unsigned char key, bool pressed) {
     if (!active) return;
     if (key == 27) exit(0);
@@ -426,12 +615,20 @@ void Level2::handleKeyboard(unsigned char key, bool pressed) {
     if ((key == 'r' || key == 'R') && pressed) {
         crashSystem.reset();
         soundSystem.reset();
+        shootingSystem.reset();
         gameTimer = maxGameTime;
         score = 0;
         gameOver = false;
         showGameOver = false;
         hasLanded = false;
         showWinMessage = false;
+        hasTouchedDown = false;
+        touchdownLocalZ = 0.0f;
+    }
+    
+    // Shooting - Space key to fire
+    if (key == ' ' && pressed && flightSim && !gameOver) {
+        shootingSystem.fire(flightSim->player.position, flightSim->player.forward);
     }
     
     if (flightSim) flightSim->handleInput(key, pressed);
@@ -707,25 +904,27 @@ void Level2::renderHUD() {
 
 // ============ BUILDING OBSTACLE FUNCTIONS ============
 
-// --- CITY MODEL SYSTEM ---
-void Level2::initCity() {
-    // Place city in the center area of the map
-    cityPosition = Vector3f(0.0f, 0.0f, 0.0f);
-    cityRotation = 0.0f;
-    cityScale = 1.5f;  // Scale up for visibility
-}
-
-void Level2::renderCity() {
-    // Only render if city model loaded successfully
-    if (!cityModelLoaded) return;
-    
+// --- AIRPORT TERMINAL SYSTEM ---
+void Level2::renderAirportTerminal() {
     glPushMatrix();
     
-    glTranslatef(cityPosition.x, cityPosition.y, cityPosition.z);
-    glRotatef(cityRotation, 0.0f, 1.0f, 0.0f);
-    glScalef(cityScale, cityScale, cityScale);
+    // Position terminal next to runway (offset to the side)
+    // Terminal is placed to the left of the runway looking from approach direction
+    float rotRad = runwayRotation * 3.14159f / 180.0f;
+    float offsetX = -sin(rotRad) * 150.0f;  // 150 units to the left of runway (further away)
+    float offsetZ = cos(rotRad) * 150.0f;
     
-    model_city.Draw();
+    glTranslatef(runwayPosition.x + offsetX, 0.0f, runwayPosition.z + offsetZ);
+    glRotatef(runwayRotation, 0.0f, 1.0f, 0.0f);
+    glScalef(terminalScale, terminalScale, terminalScale);
+    
+    // Bind terminal texture if loaded
+    if (tex_airportTerminal != 0) {
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, tex_airportTerminal);
+    }
+    
+    model_airportTerminal.Draw();
     
     glPopMatrix();
 }
@@ -733,7 +932,7 @@ void Level2::renderCity() {
 void Level2::initBuildings() {
     buildings.clear();
     
-    // Create buildings far from the city center (0,0,0) and airport (-800, 0, -800)
+    // Create buildings far from the center and airport (-800, 0, -800)
     // Buildings will be placed in outer ring around 400-700 units from center
     // but NOT in the direction of the airport (which is at -800, -800)
     const int numBuildings = 30;
@@ -830,201 +1029,525 @@ void Level2::checkBuildingCollision() {
     }
 }
 
-// --- AIRPORT LANDING TARGET SYSTEM ---
+// --- REALISTIC RUNWAY SYSTEM ---
 void Level2::initAirport() {
-    // Place airport far from the city (buildings are at 150-550 from center)
-    // Airport is placed at -800, 0, -800 so it's clearly outside the city
-    airportPosition = Vector3f(-800.0f, 0.0f, -800.0f);
-    airportRotation = 30.0f;  // Angled runway
-    airportScale = 0.8f;      // Slightly larger for visibility
+    // Runway positioned away from the city
+    runwayPosition = Vector3f(-800.0f, 0.1f, -800.0f);  // Raised higher to prevent z-fighting
+    runwayRotation = 30.0f;   // Angled runway (heading 030)
+    runwayLength = 700.0f;    // 700 units long (longer for easier landing)
+    runwayWidth = 50.0f;      // 50 units wide
     hasLanded = false;
     showWinMessage = false;
     winMessageTimer = 0.0f;
 }
 
 void Level2::renderAirport() {
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
     glPushMatrix();
     
-    glTranslatef(airportPosition.x, airportPosition.y, airportPosition.z);
-    glRotatef(airportRotation, 0.0f, 1.0f, 0.0f);
-    glScalef(airportScale, airportScale, airportScale);
+    // Transform to runway position and rotation
+    glTranslatef(runwayPosition.x, runwayPosition.y, runwayPosition.z);
+    glRotatef(runwayRotation, 0.0f, 1.0f, 0.0f);
     
-    model_airport.Draw();
+    // Enable texturing
+    glEnable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glBindTexture(GL_TEXTURE_2D, tex_runway);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    
+    float halfLength = runwayLength / 2.0f;
+    float halfWidth = runwayWidth / 2.0f;
+    
+    // Main runway surface (dark asphalt)
+    glBegin(GL_QUADS);
+    glNormal3f(0, 1, 0);
+    // Texture repeats along runway length
+    glTexCoord2f(0, 0);           glVertex3f(-halfWidth, 0, -halfLength);
+    glTexCoord2f(1, 0);           glVertex3f(halfWidth, 0, -halfLength);
+    glTexCoord2f(1, runwayLength/50.0f); glVertex3f(halfWidth, 0, halfLength);
+    glTexCoord2f(0, runwayLength/50.0f); glVertex3f(-halfWidth, 0, halfLength);
+    glEnd();
+    
+    // Runway shoulders (slightly lighter concrete)
+    glDisable(GL_TEXTURE_2D);
+    float shoulderWidth = 8.0f;
+    glColor3f(0.35f, 0.35f, 0.33f);
+    
+    // Left shoulder
+    glBegin(GL_QUADS);
+    glNormal3f(0, 1, 0);
+    glVertex3f(-halfWidth - shoulderWidth, 0.005f, -halfLength - 10);
+    glVertex3f(-halfWidth, 0.005f, -halfLength - 10);
+    glVertex3f(-halfWidth, 0.005f, halfLength + 10);
+    glVertex3f(-halfWidth - shoulderWidth, 0.005f, halfLength + 10);
+    glEnd();
+    
+    // Right shoulder
+    glBegin(GL_QUADS);
+    glNormal3f(0, 1, 0);
+    glVertex3f(halfWidth, 0.005f, -halfLength - 10);
+    glVertex3f(halfWidth + shoulderWidth, 0.005f, -halfLength - 10);
+    glVertex3f(halfWidth + shoulderWidth, 0.005f, halfLength + 10);
+    glVertex3f(halfWidth, 0.005f, halfLength + 10);
+    glEnd();
+    
+    // Threshold areas (darker)
+    glColor3f(0.15f, 0.15f, 0.15f);
+    float thresholdLength = 20.0f;
+    
+    // Entry threshold
+    glBegin(GL_QUADS);
+    glNormal3f(0, 1, 0);
+    glVertex3f(-halfWidth, 0.02f, halfLength - thresholdLength);
+    glVertex3f(halfWidth, 0.02f, halfLength - thresholdLength);
+    glVertex3f(halfWidth, 0.02f, halfLength);
+    glVertex3f(-halfWidth, 0.02f, halfLength);
+    glEnd();
+    
+    // Exit threshold
+    glBegin(GL_QUADS);
+    glNormal3f(0, 1, 0);
+    glVertex3f(-halfWidth, 0.02f, -halfLength);
+    glVertex3f(halfWidth, 0.02f, -halfLength);
+    glVertex3f(halfWidth, 0.02f, -halfLength + thresholdLength);
+    glVertex3f(-halfWidth, 0.02f, -halfLength + thresholdLength);
+    glEnd();
     
     glPopMatrix();
+    glPopAttrib();
+}
+
+void Level2::renderRunwayMarkings() {
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glPushMatrix();
+    
+    glTranslatef(runwayPosition.x, runwayPosition.y + 0.03f, runwayPosition.z);
+    glRotatef(runwayRotation, 0.0f, 1.0f, 0.0f);
+    
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    
+    float halfLength = runwayLength / 2.0f;
+    float halfWidth = runwayWidth / 2.0f;
+    
+    // White runway markings
+    glColor3f(0.95f, 0.95f, 0.95f);
+    
+    // === THRESHOLD MARKINGS (piano keys) ===
+    int numThresholdBars = 8;
+    float barWidth = 3.0f;
+    float barLength = 30.0f;
+    float barSpacing = (runwayWidth - barWidth) / (numThresholdBars - 1);
+    
+    // Entry threshold bars
+    for (int i = 0; i < numThresholdBars; i++) {
+        float x = -halfWidth + barWidth/2 + i * barSpacing;
+        glBegin(GL_QUADS);
+        glVertex3f(x - barWidth/2, 0, halfLength - 5);
+        glVertex3f(x + barWidth/2, 0, halfLength - 5);
+        glVertex3f(x + barWidth/2, 0, halfLength - 5 - barLength);
+        glVertex3f(x - barWidth/2, 0, halfLength - 5 - barLength);
+        glEnd();
+    }
+    
+    // Exit threshold bars
+    for (int i = 0; i < numThresholdBars; i++) {
+        float x = -halfWidth + barWidth/2 + i * barSpacing;
+        glBegin(GL_QUADS);
+        glVertex3f(x - barWidth/2, 0, -halfLength + 5);
+        glVertex3f(x + barWidth/2, 0, -halfLength + 5);
+        glVertex3f(x + barWidth/2, 0, -halfLength + 5 + barLength);
+        glVertex3f(x - barWidth/2, 0, -halfLength + 5 + barLength);
+        glEnd();
+    }
+    
+    // === CENTERLINE DASHES ===
+    float dashLength = 15.0f;
+    float dashGap = 10.0f;
+    float dashWidth = 1.0f;
+    float centerStart = halfLength - 50.0f;  // Start after threshold
+    float centerEnd = -halfLength + 50.0f;
+    
+    for (float z = centerStart; z > centerEnd; z -= (dashLength + dashGap)) {
+        glBegin(GL_QUADS);
+        glVertex3f(-dashWidth/2, 0, z);
+        glVertex3f(dashWidth/2, 0, z);
+        glVertex3f(dashWidth/2, 0, z - dashLength);
+        glVertex3f(-dashWidth/2, 0, z - dashLength);
+        glEnd();
+    }
+    
+    // === AIMING POINT MARKERS (big rectangles) ===
+    float aimingPointZ = halfLength - 80.0f;  // 80 units from threshold
+    float aimingWidth = 8.0f;
+    float aimingLength = 45.0f;
+    float aimingOffset = 12.0f;  // Distance from centerline
+    
+    // Left aiming point
+    glBegin(GL_QUADS);
+    glVertex3f(-aimingOffset - aimingWidth, 0, aimingPointZ);
+    glVertex3f(-aimingOffset, 0, aimingPointZ);
+    glVertex3f(-aimingOffset, 0, aimingPointZ - aimingLength);
+    glVertex3f(-aimingOffset - aimingWidth, 0, aimingPointZ - aimingLength);
+    glEnd();
+    
+    // Right aiming point
+    glBegin(GL_QUADS);
+    glVertex3f(aimingOffset, 0, aimingPointZ);
+    glVertex3f(aimingOffset + aimingWidth, 0, aimingPointZ);
+    glVertex3f(aimingOffset + aimingWidth, 0, aimingPointZ - aimingLength);
+    glVertex3f(aimingOffset, 0, aimingPointZ - aimingLength);
+    glEnd();
+    
+    // === TOUCHDOWN ZONE MARKERS ===
+    float tzStart = halfLength - 60.0f;
+    float tzBarWidth = 4.0f;
+    float tzBarLength = 22.0f;
+    float tzOffset = 8.0f;
+    
+    // Three pairs of touchdown zone markers
+    for (int row = 0; row < 3; row++) {
+        float z = tzStart - row * 40.0f;
+        
+        // Left bar
+        glBegin(GL_QUADS);
+        glVertex3f(-tzOffset - tzBarWidth, 0, z);
+        glVertex3f(-tzOffset, 0, z);
+        glVertex3f(-tzOffset, 0, z - tzBarLength);
+        glVertex3f(-tzOffset - tzBarWidth, 0, z - tzBarLength);
+        glEnd();
+        
+        // Right bar
+        glBegin(GL_QUADS);
+        glVertex3f(tzOffset, 0, z);
+        glVertex3f(tzOffset + tzBarWidth, 0, z);
+        glVertex3f(tzOffset + tzBarWidth, 0, z - tzBarLength);
+        glVertex3f(tzOffset, 0, z - tzBarLength);
+        glEnd();
+    }
+    
+    // === EDGE LINES ===
+    float edgeWidth = 1.5f;
+    
+    // Left edge
+    glBegin(GL_QUADS);
+    glVertex3f(-halfWidth + edgeWidth, 0, halfLength);
+    glVertex3f(-halfWidth, 0, halfLength);
+    glVertex3f(-halfWidth, 0, -halfLength);
+    glVertex3f(-halfWidth + edgeWidth, 0, -halfLength);
+    glEnd();
+    
+    // Right edge
+    glBegin(GL_QUADS);
+    glVertex3f(halfWidth - edgeWidth, 0, halfLength);
+    glVertex3f(halfWidth, 0, halfLength);
+    glVertex3f(halfWidth, 0, -halfLength);
+    glVertex3f(halfWidth - edgeWidth, 0, -halfLength);
+    glEnd();
+    
+    // === RUNWAY DESIGNATION NUMBERS (simplified - use blocks) ===
+    // "03" at entry end (heading 030)
+    float numZ = halfLength - 45.0f;
+    float numScale = 3.0f;
+    
+    // Draw "0"
+    float num0X = -6.0f;
+    glBegin(GL_LINE_LOOP);
+    glVertex3f(num0X - 2*numScale, 0, numZ);
+    glVertex3f(num0X + 2*numScale, 0, numZ);
+    glVertex3f(num0X + 2*numScale, 0, numZ - 8*numScale);
+    glVertex3f(num0X - 2*numScale, 0, numZ - 8*numScale);
+    glEnd();
+    
+    // Draw "3"
+    float num3X = 6.0f;
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_STRIP);
+    glVertex3f(num3X - 2*numScale, 0, numZ);
+    glVertex3f(num3X + 2*numScale, 0, numZ);
+    glVertex3f(num3X + 2*numScale, 0, numZ - 4*numScale);
+    glVertex3f(num3X - 1*numScale, 0, numZ - 4*numScale);
+    glVertex3f(num3X + 2*numScale, 0, numZ - 4*numScale);
+    glVertex3f(num3X + 2*numScale, 0, numZ - 8*numScale);
+    glVertex3f(num3X - 2*numScale, 0, numZ - 8*numScale);
+    glEnd();
+    
+    glPopMatrix();
+    glPopAttrib();
+}
+
+void Level2::renderPAPI(bool isNight) {
+    // PAPI - Precision Approach Path Indicator
+    // 4 lights on each side of runway threshold
+    // Shows glide slope: 2 red/2 white = on glide path
+    
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glPushMatrix();
+    
+    glTranslatef(runwayPosition.x, runwayPosition.y, runwayPosition.z);
+    glRotatef(runwayRotation, 0.0f, 1.0f, 0.0f);
+    
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    
+    float halfLength = runwayLength / 2.0f;
+    float halfWidth = runwayWidth / 2.0f;
+    float papiZ = halfLength + 15.0f;  // Just before runway
+    float papiX = halfWidth + 20.0f;   // To the left of runway
+    float papiSpacing = 5.0f;
+    
+    // Brightness based on time (brighter at night)
+    float brightness = isNight ? 1.0f : 0.6f;
+    float glowSize = isNight ? 2.5f : 1.5f;
+    
+    // Calculate glide slope for player
+    float glideAngle = 3.0f;  // Standard 3 degree glide slope
+    
+    for (int i = 0; i < 4; i++) {
+        float x = -papiX + i * papiSpacing;
+        float y = 1.0f;  // Elevated on stands
+        
+        // Alternate colors for visual effect (in reality based on viewing angle)
+        bool isRed = (i < 2);  // Simple: first 2 red, last 2 white
+        
+        if (isRed) {
+            glColor4f(1.0f * brightness, 0.1f * brightness, 0.1f * brightness, brightness);
+        } else {
+            glColor4f(1.0f * brightness, 1.0f * brightness, 1.0f * brightness, brightness);
+        }
+        
+        // Light housing
+        glPushMatrix();
+        glTranslatef(x, y, papiZ);
+        glutSolidSphere(0.8f, 8, 8);
+        glPopMatrix();
+        
+        // Glow effect at night
+        if (isNight) {
+            if (isRed) {
+                glColor4f(1.0f, 0.2f, 0.2f, 0.4f);
+            } else {
+                glColor4f(1.0f, 1.0f, 0.9f, 0.4f);
+            }
+            glPushMatrix();
+            glTranslatef(x, y, papiZ);
+            glutSolidSphere(glowSize, 8, 8);
+            glPopMatrix();
+        }
+    }
+    
+    glPopMatrix();
+    glPopAttrib();
 }
 
 void Level2::renderRunwayLights(bool isNight) {
-    // Only render runway lights at night
-    if (!isNight) return;
+    // Runway lights are more visible at night but also visible during day
+    float baseBrightness = isNight ? 1.0f : 0.3f;
+    if (!isNight) baseBrightness = 0.0f;  // Only show at night for now
+    if (baseBrightness < 0.01f) return;
     
     glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glPushMatrix();
+    
+    glTranslatef(runwayPosition.x, runwayPosition.y, runwayPosition.z);
+    glRotatef(runwayRotation, 0.0f, 1.0f, 0.0f);
     
     glDisable(GL_TEXTURE_2D);
     glDisable(GL_LIGHTING);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending for emissive glow
     
-    // Runway parameters (matching checkLandingCondition)
-    float runwayLength = 150.0f;
-    float runwayWidth = 40.0f;
-    float runwayStartZ = airportPosition.z + runwayLength / 2;
-    float runwayEndZ = airportPosition.z - runwayLength / 2;
-    
-    // Calculate runway direction based on rotation
-    float rotRad = airportRotation * 3.14159f / 180.0f;
-    float cosRot = cos(rotRad);
-    float sinRot = sin(rotRad);
+    float halfLength = runwayLength / 2.0f;
+    float halfWidth = runwayWidth / 2.0f;
     
     // Pulsing effect - smooth sine wave
-    float pulse = 0.6f + 0.4f * sin(runwayLightTimer * 3.14159f);  // Pulse between 0.6 and 1.0
+    float pulse = 0.7f + 0.3f * sin(runwayLightTimer * 3.14159f);
     
-    // Sequential chase effect along runway
-    float chaseOffset = fmod(runwayLightTimer * 2.0f, 1.0f);  // 0 to 1 moving along runway
+    // Sequential chase effect along runway (approach direction)
+    float chaseOffset = fmod(runwayLightTimer * 1.5f, 1.0f);
     
-    // Number of lights along each side of runway
-    const int numLights = 12;
-    float lightSpacing = runwayLength / (float)(numLights - 1);
+    // === EDGE LIGHTS (white/yellow) ===
+    const int numEdgeLights = 16;
+    float edgeLightSpacing = runwayLength / (float)(numEdgeLights - 1);
     
-    // Edge lights (white/yellow) - along both sides of runway
-    for (int i = 0; i < numLights; i++) {
-        float t = (float)i / (float)(numLights - 1);  // 0 to 1 along runway
+    for (int i = 0; i < numEdgeLights; i++) {
+        float t = (float)i / (float)(numEdgeLights - 1);
+        float z = halfLength - i * edgeLightSpacing;
         
-        // Calculate position along runway centerline
-        float zOffset = runwayLength / 2.0f - i * lightSpacing;
-        
-        // Apply rotation for angled runway
-        float localX = runwayWidth / 2.0f + 2.0f;  // Slightly outside runway edge
-        float localZ = zOffset;
-        
-        // Rotate around airport center
-        float worldXLeft = airportPosition.x + (-localX * cosRot - localZ * sinRot);
-        float worldZLeft = airportPosition.z + (-localX * sinRot + localZ * cosRot);
-        float worldXRight = airportPosition.x + (localX * cosRot - localZ * sinRot);
-        float worldZRight = airportPosition.z + (localX * sinRot + localZ * cosRot);
-        
-        // Chase effect - lights near the "chase position" are brighter
+        // Chase brightness - creates flowing light effect
         float chaseT = fmod(chaseOffset + t, 1.0f);
         float chaseBrightness = 0.5f + 0.5f * (1.0f - fabs(chaseT - 0.5f) * 2.0f);
-        
-        // Combined brightness
-        float brightness = pulse * chaseBrightness;
+        float brightness = baseBrightness * pulse * chaseBrightness;
         
         // Left edge light (warm white/amber)
-        glColor4f(1.0f * brightness, 0.9f * brightness, 0.5f * brightness, brightness);
+        float leftX = -halfWidth - 2.0f;
+        glColor4f(1.0f * brightness, 0.9f * brightness, 0.6f * brightness, brightness);
         glPushMatrix();
-        glTranslatef(worldXLeft, 0.5f, worldZLeft);  // Slightly above ground
-        glutSolidSphere(0.8f, 6, 6);
+        glTranslatef(leftX, 0.8f, z);
+        glutSolidSphere(0.6f, 6, 6);
         glPopMatrix();
         
         // Left glow halo
-        glColor4f(1.0f, 0.9f, 0.5f, 0.3f * brightness);
+        glColor4f(1.0f, 0.9f, 0.6f, 0.25f * brightness);
         glPushMatrix();
-        glTranslatef(worldXLeft, 0.5f, worldZLeft);
-        glutSolidSphere(2.0f, 6, 6);
+        glTranslatef(leftX, 0.8f, z);
+        glutSolidSphere(1.8f, 6, 6);
         glPopMatrix();
         
         // Right edge light
-        glColor4f(1.0f * brightness, 0.9f * brightness, 0.5f * brightness, brightness);
+        float rightX = halfWidth + 2.0f;
+        glColor4f(1.0f * brightness, 0.9f * brightness, 0.6f * brightness, brightness);
         glPushMatrix();
-        glTranslatef(worldXRight, 0.5f, worldZRight);
-        glutSolidSphere(0.8f, 6, 6);
+        glTranslatef(rightX, 0.8f, z);
+        glutSolidSphere(0.6f, 6, 6);
         glPopMatrix();
         
         // Right glow halo
-        glColor4f(1.0f, 0.9f, 0.5f, 0.3f * brightness);
+        glColor4f(1.0f, 0.9f, 0.6f, 0.25f * brightness);
         glPushMatrix();
-        glTranslatef(worldXRight, 0.5f, worldZRight);
+        glTranslatef(rightX, 0.8f, z);
+        glutSolidSphere(1.8f, 6, 6);
+        glPopMatrix();
+    }
+    
+    // === THRESHOLD LIGHTS (green at entry) ===
+    float thresholdPulse = 0.7f + 0.3f * sin(runwayLightTimer * 6.28f);
+    const int numThresholdLights = 10;
+    float thresholdSpacing = runwayWidth / (float)(numThresholdLights - 1);
+    
+    for (int i = 0; i < numThresholdLights; i++) {
+        float x = -halfWidth + i * thresholdSpacing;
+        float z = halfLength + 3.0f;
+        float brightness = baseBrightness * thresholdPulse;
+        
+        // Green threshold light
+        glColor4f(0.2f * brightness, 1.0f * brightness, 0.3f * brightness, brightness);
+        glPushMatrix();
+        glTranslatef(x, 0.6f, z);
+        glutSolidSphere(0.7f, 6, 6);
+        glPopMatrix();
+        
+        // Green glow
+        glColor4f(0.2f, 1.0f, 0.3f, 0.35f * brightness);
+        glPushMatrix();
+        glTranslatef(x, 0.6f, z);
         glutSolidSphere(2.0f, 6, 6);
         glPopMatrix();
     }
     
-    // Threshold lights (green) at runway start - brighter and pulsing
-    float thresholdPulse = 0.7f + 0.3f * sin(runwayLightTimer * 6.28f);  // Faster pulse
-    const int numThresholdLights = 6;
-    float thresholdSpacing = runwayWidth / (float)(numThresholdLights - 1);
-    
+    // === END OF RUNWAY LIGHTS (red warning) ===
     for (int i = 0; i < numThresholdLights; i++) {
-        float localX = -runwayWidth / 2.0f + i * thresholdSpacing;
-        float localZ = runwayLength / 2.0f + 3.0f;  // At runway entry
-        
-        // Rotate around airport center
-        float worldX = airportPosition.x + (localX * cosRot - localZ * sinRot);
-        float worldZ = airportPosition.z + (localX * sinRot + localZ * cosRot);
-        
-        // Green threshold light
-        glColor4f(0.2f * thresholdPulse, 1.0f * thresholdPulse, 0.3f * thresholdPulse, thresholdPulse);
-        glPushMatrix();
-        glTranslatef(worldX, 0.5f, worldZ);
-        glutSolidSphere(1.0f, 6, 6);
-        glPopMatrix();
-        
-        // Green glow
-        glColor4f(0.2f, 1.0f, 0.3f, 0.4f * thresholdPulse);
-        glPushMatrix();
-        glTranslatef(worldX, 0.5f, worldZ);
-        glutSolidSphere(2.5f, 6, 6);
-        glPopMatrix();
-    }
-    
-    // End of runway lights (red) - warning
-    for (int i = 0; i < numThresholdLights; i++) {
-        float localX = -runwayWidth / 2.0f + i * thresholdSpacing;
-        float localZ = -runwayLength / 2.0f - 3.0f;  // At runway end
-        
-        // Rotate around airport center
-        float worldX = airportPosition.x + (localX * cosRot - localZ * sinRot);
-        float worldZ = airportPosition.z + (localX * sinRot + localZ * cosRot);
+        float x = -halfWidth + i * thresholdSpacing;
+        float z = -halfLength - 3.0f;
+        float brightness = baseBrightness * thresholdPulse;
         
         // Red end light
-        glColor4f(1.0f * thresholdPulse, 0.2f * thresholdPulse, 0.2f * thresholdPulse, thresholdPulse);
+        glColor4f(1.0f * brightness, 0.15f * brightness, 0.15f * brightness, brightness);
         glPushMatrix();
-        glTranslatef(worldX, 0.5f, worldZ);
-        glutSolidSphere(1.0f, 6, 6);
+        glTranslatef(x, 0.6f, z);
+        glutSolidSphere(0.7f, 6, 6);
         glPopMatrix();
         
         // Red glow
-        glColor4f(1.0f, 0.2f, 0.2f, 0.4f * thresholdPulse);
+        glColor4f(1.0f, 0.15f, 0.15f, 0.35f * brightness);
         glPushMatrix();
-        glTranslatef(worldX, 0.5f, worldZ);
-        glutSolidSphere(2.5f, 6, 6);
+        glTranslatef(x, 0.6f, z);
+        glutSolidSphere(2.0f, 6, 6);
         glPopMatrix();
     }
     
-    // Centerline lights (white) down the middle of runway
-    const int numCenterLights = 8;
-    float centerSpacing = runwayLength / (float)(numCenterLights + 1);
+    // === CENTERLINE LIGHTS (white, sequenced) ===
+    const int numCenterLights = 12;
+    float centerSpacing = (runwayLength - 60) / (float)(numCenterLights + 1);
     
     for (int i = 1; i <= numCenterLights; i++) {
-        float localZ = runwayLength / 2.0f - i * centerSpacing;
+        float z = halfLength - 30 - i * centerSpacing;
         
-        // Rotate around airport center
-        float worldX = airportPosition.x + (-localZ * sinRot);
-        float worldZ = airportPosition.z + (localZ * cosRot);
-        
-        // Sequential flash for centerline
-        float flashPhase = fmod(runwayLightTimer * 4.0f + (float)i * 0.2f, 1.0f);
-        float flashBrightness = (flashPhase < 0.3f) ? 1.0f : 0.4f;
+        // Sequential flash for centerline (approach guidance)
+        float flashPhase = fmod(runwayLightTimer * 4.0f + (float)i * 0.15f, 1.0f);
+        float flashBrightness = (flashPhase < 0.25f) ? 1.0f : 0.35f;
+        float brightness = baseBrightness * flashBrightness;
         
         // White centerline light
-        glColor4f(flashBrightness, flashBrightness, flashBrightness * 0.95f, flashBrightness);
+        glColor4f(brightness, brightness, brightness * 0.95f, brightness);
         glPushMatrix();
-        glTranslatef(worldX, 0.3f, worldZ);
-        glutSolidSphere(0.6f, 6, 6);
+        glTranslatef(0, 0.3f, z);
+        glutSolidSphere(0.5f, 6, 6);
+        glPopMatrix();
+        
+        // Subtle glow
+        if (flashPhase < 0.25f) {
+            glColor4f(1.0f, 1.0f, 0.95f, 0.2f * brightness);
+            glPushMatrix();
+            glTranslatef(0, 0.3f, z);
+            glutSolidSphere(1.2f, 6, 6);
+            glPopMatrix();
+        }
+    }
+    
+    // === APPROACH LIGHTS (ALSF-style) - lead-in lights before runway ===
+    const int numApproachLights = 8;
+    float approachSpacing = 15.0f;
+    
+    for (int i = 0; i < numApproachLights; i++) {
+        float z = halfLength + 20.0f + i * approachSpacing;
+        
+        // Sequential strobe effect (chasing towards runway)
+        float strobePhase = fmod(runwayLightTimer * 6.0f - (float)i * 0.12f, 1.0f);
+        float strobeBrightness = (strobePhase < 0.15f) ? 1.0f : 0.2f;
+        float brightness = baseBrightness * strobeBrightness;
+        
+        // Center approach light (bright white strobe)
+        glColor4f(brightness, brightness, brightness, brightness);
+        glPushMatrix();
+        glTranslatef(0, 1.5f, z);
+        glutSolidSphere(0.8f, 6, 6);
+        glPopMatrix();
+        
+        // Strobe flash glow
+        if (strobePhase < 0.15f) {
+            glColor4f(1.0f, 1.0f, 1.0f, 0.5f * brightness);
+            glPushMatrix();
+            glTranslatef(0, 1.5f, z);
+            glutSolidSphere(3.0f, 6, 6);
+            glPopMatrix();
+        }
+        
+        // Side bar lights (wider pattern further from runway)
+        float sideSpread = 5.0f + (float)i * 2.0f;
+        float sideBrightness = brightness * 0.6f;
+        
+        glColor4f(sideBrightness, sideBrightness * 0.95f, sideBrightness * 0.8f, sideBrightness);
+        
+        // Left side
+        glPushMatrix();
+        glTranslatef(-sideSpread, 1.0f, z);
+        glutSolidSphere(0.5f, 6, 6);
+        glPopMatrix();
+        
+        // Right side
+        glPushMatrix();
+        glTranslatef(sideSpread, 1.0f, z);
+        glutSolidSphere(0.5f, 6, 6);
         glPopMatrix();
     }
     
+    glPopMatrix();
     glPopAttrib();
 }
 
 void Level2::renderTargetArrow() {
     if (hasLanded) return;  // Don't show arrow after landing
     
-    // Animated bobbing arrow above the airport
+    // Animated bobbing arrow above the runway
     float bobHeight = 80.0f + sin(arrowBobOffset) * 10.0f;
     
     glPushMatrix();
-    glTranslatef(airportPosition.x, airportPosition.y + bobHeight, airportPosition.z);
+    glTranslatef(runwayPosition.x, runwayPosition.y + bobHeight, runwayPosition.z);
     
     // Rotate to always face somewhat visible
     glRotatef(arrowBobOffset * 30.0f, 0.0f, 1.0f, 0.0f);
@@ -1096,36 +1619,20 @@ void Level2::checkLandingCondition() {
     if (!flightSim || hasLanded || flightSim->isCrashed || gameOver) return;
     
     Vector3f playerPos = flightSim->player.position;
-    float speed = flightSim->getSpeed();
     
-    // Check if player is near the airport
-    float dx = playerPos.x - airportPosition.x;
-    float dz = playerPos.z - airportPosition.z;
-    float distanceXZ = sqrt(dx*dx + dz*dz);
+    // Simple distance check to airport/runway area
+    float dx = playerPos.x - runwayPosition.x;
+    float dz = playerPos.z - runwayPosition.z;
+    float distanceToAirport = sqrt(dx * dx + dz * dz);
     
-    // Runway dimensions and position
-    float runwayLength = 150.0f;  // Length of runway
-    float runwayWidth = 40.0f;    // Width of runway
-    float runwayStartZ = airportPosition.z + runwayLength / 2;  // Start of runway (entry point)
-    float runwayEndZ = airportPosition.z - runwayLength / 2;    // End of runway
+    // SUPER SIMPLE WIN CONDITION:
+    // Just be on the ground anywhere near the airport (within 500 units)
+    // That's it! No speed check, no complex rotation math, just land near the airport.
     
-    // Check if player is on the runway (rectangular area)
-    bool onRunway = (fabs(playerPos.x - airportPosition.x) < runwayWidth / 2) &&
-                    (playerPos.z > runwayEndZ && playerPos.z < runwayStartZ);
-    
-    // Win conditions (must be FULLY STOPPED on runway):
-    // 1. On the runway
-    // 2. On the ground (very low altitude)
-    // 3. FULLY STOPPED (speed < 5)
-    // 4. Grounded state
-    
-    if (onRunway && 
-        playerPos.y < 3.0f && 
-        playerPos.y >= 0.0f &&
-        speed < 5.0f &&
-        flightSim->isGrounded) {
+    if (distanceToAirport < 500.0f &&   // Within 500 units of airport
+        flightSim->isGrounded) {         // On the ground
         
-        // Successful landing!
+        // YOU WIN!
         hasLanded = true;
         showWinMessage = true;
         winMessageTimer = 0.0f;
@@ -1133,13 +1640,8 @@ void Level2::checkLandingCondition() {
         // Play landing sound
         soundSystem.playLandingSound();
         
-        // Calculate landing position bonus
-        // Landing earlier on the runway (closer to entry/start) earns higher bonus
-        float runwayProgress = (runwayStartZ - playerPos.z) / runwayLength;  // 0.0 at start, 1.0 at end
-        runwayProgress = fmax(0.0f, fmin(1.0f, runwayProgress));  // Clamp 0-1
-        
-        // Earlier landing = higher bonus (up to 500 points)
-        int runwayBonus = (int)((1.0f - runwayProgress) * 500.0f);
+        // Random landing bonus (100-500 points) - rewards early/lucky landings
+        int runwayBonus = 100 + (rand() % 401);
         
         // Time bonus based on remaining time (up to 1000 points)
         landingBonus = (int)(gameTimer / maxGameTime * 1000.0f) + runwayBonus;
@@ -1352,4 +1854,45 @@ void Level2::renderGameOverScreen() {
     glPopMatrix();
     glMatrixMode(GL_MODELVIEW);
     glPopMatrix();
+}
+
+void Level2::renderShadows() {
+    if (!flightSim) return;
+    
+    // Render plane shadow (oval shaped, follows plane orientation)
+    float planeHeight = flightSim->player.position.y;
+    if (planeHeight < 150.0f) {  // Only render shadow if plane is not too high
+        shadowSystem.renderOvalShadow(
+            flightSim->player.position,
+            flightSim->player.forward,
+            8.0f,   // Length (plane is longer than wide)
+            4.0f,   // Width
+            planeHeight,
+            150.0f  // Max height for visible shadow
+        );
+    }
+    
+    // Render shadows for fuel containers
+    for (size_t i = 0; i < fuelContainers.size(); i++) {
+        if (fuelContainers[i].collected) continue;
+        
+        float bobHeight = sin(fuelContainers[i].bobOffset) * 3.0f;
+        Vector3f containerPos = fuelContainers[i].position;
+        float height = containerPos.y + bobHeight;
+        
+        shadowSystem.renderBlobShadow(containerPos, 3.0f, height, 120.0f);
+    }
+    
+    // Render ambient occlusion at building bases
+    for (size_t i = 0; i < buildings.size(); i++) {
+        BuildingObstacle& b = buildings[i];
+        shadowSystem.renderBaseAO(b.position, b.width * 1.5f, 0.4f);
+    }
+    
+    // Render shadow/AO for trees and houses (static objects)
+    shadowSystem.renderBaseAO(Vector3f(10.0f, 0.0f, 0.0f), 5.0f, 0.3f);  // Tree
+    shadowSystem.renderBaseAO(Vector3f(0.0f, 0.0f, 0.0f), 8.0f, 0.35f);  // House
+    
+    // Runway shadow/AO (subtle under the runway area)
+    shadowSystem.renderBaseAO(runwayPosition, runwayWidth, 0.15f);
 }

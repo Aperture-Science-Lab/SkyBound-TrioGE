@@ -6,7 +6,7 @@
 SkySystem::SkySystem() 
     : tex_sky_morning(0), tex_sky_noon(0), tex_sky_sunset(0), tex_sky_night(0),
       sunIntensity(1.0f), currentTime(TimeOfDay::MORNING), previousTime(TimeOfDay::MORNING),
-      cycleTimer(0.0f), transitionProgress(0.0f), inTransition(false) {
+      cycleTimer(0.0f), transitionProgress(0.0f), inTransition(false), cloudsInitialized(false) {
     
     // Initial sun direction for morning
     sunDirection = Vector3f(0.5f, 0.3f, 0.8f);
@@ -17,6 +17,9 @@ SkySystem::SkySystem()
     
     for (int i = 0; i < 10; i++) {
         tex_flare[i] = 0;
+    }
+    for (int i = 0; i < 3; i++) {
+        tex_cloud[i] = 0;
     }
 }
 
@@ -29,6 +32,11 @@ SkySystem::~SkySystem() {
     for (int i = 0; i < 10; i++) {
         if (tex_flare[i] != 0) {
             glDeleteTextures(1, &tex_flare[i]);
+        }
+    }
+    for (int i = 0; i < 3; i++) {
+        if (tex_cloud[i] != 0) {
+            glDeleteTextures(1, &tex_cloud[i]);
         }
     }
 }
@@ -48,7 +56,43 @@ void SkySystem::init() {
         loadSkyTexture("../textures/nightsky.bmp", tex_sky_night, true);
     }
     
+    // Load cloud textures - with fallback to procedural generation
+    if (!loadSkyTexture("textures/cloude1.bmp", tex_cloud[0])) {
+        if (!loadSkyTexture("../textures/cloude1.bmp", tex_cloud[0])) {
+            // Generate fallback cloud texture
+            glGenTextures(1, &tex_cloud[0]);
+            glBindTexture(GL_TEXTURE_2D, tex_cloud[0]);
+            unsigned char cloudTex[64 * 64 * 4];
+            for (int y = 0; y < 64; y++) {
+                for (int x = 0; x < 64; x++) {
+                    float dx = (x - 32) / 32.0f;
+                    float dy = (y - 32) / 32.0f;
+                    float dist = sqrt(dx*dx + dy*dy);
+                    float alpha = (1.0f - dist) * 1.5f;
+                    if (alpha < 0) alpha = 0; if (alpha > 1) alpha = 1;
+                    int idx = (y * 64 + x) * 4;
+                    cloudTex[idx] = cloudTex[idx+1] = cloudTex[idx+2] = 255;
+                    cloudTex[idx+3] = (unsigned char)(alpha * 200);
+                }
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, cloudTex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+    }
+    if (!loadSkyTexture("textures/cloude2.bmp", tex_cloud[1])) {
+        if (!loadSkyTexture("../textures/cloude2.bmp", tex_cloud[1])) {
+            tex_cloud[1] = tex_cloud[0];  // Use first texture as fallback
+        }
+    }
+    if (!loadSkyTexture("textures/cloude3.bmp", tex_cloud[2])) {
+        if (!loadSkyTexture("../textures/cloude3.bmp", tex_cloud[2])) {
+            tex_cloud[2] = tex_cloud[0];  // Use first texture as fallback
+        }
+    }
+    
     generateFlareTextures();
+    initClouds();
     
     // Start at morning
     currentTime = TimeOfDay::MORNING;
@@ -640,5 +684,122 @@ void SkySystem::renderLensFlare(const Vector3f& playerPosition, const Vector3f& 
     glMatrixMode(GL_MODELVIEW);
     glPopMatrix();
     
+    glPopAttrib();
+}
+
+// Initialize cloud positions in the sky - STATIONARY world-space clouds
+void SkySystem::initClouds() {
+    if (cloudsInitialized) return;
+    
+    srand(12345);  // Fixed seed for consistent cloud placement
+    
+    for (int i = 0; i < MAX_CLOUDS; i++) {
+        // Distribute clouds in a large fixed area in the world
+        // Centered around the game area (near runway at -800, -800)
+        float baseX = -1500.0f + ((float)rand() / RAND_MAX) * 3000.0f;  // -1500 to 1500
+        float baseZ = -1500.0f + ((float)rand() / RAND_MAX) * 3000.0f;  // -1500 to 1500
+        
+        clouds[i].x = baseX;
+        clouds[i].z = baseZ;
+        clouds[i].y = 120.0f + ((float)rand() / RAND_MAX) * 80.0f;  // Height 120-200
+        
+        clouds[i].size = 15.0f + ((float)rand() / RAND_MAX) * 25.0f;  // Size 15-40 (smaller)
+        clouds[i].textureIndex = rand() % 3;  // Random cloud texture
+        clouds[i].rotation = ((float)rand() / RAND_MAX) * 360.0f;  // Random fixed rotation
+        clouds[i].alpha = 0.4f + ((float)rand() / RAND_MAX) * 0.3f;  // Alpha 0.4-0.7 (more transparent)
+    }
+    
+    cloudsInitialized = true;
+}
+
+// Render stationary horizontal cloud quads in world space
+void SkySystem::renderClouds(const Vector3f& playerPosition) {
+    if (!cloudsInitialized) return;
+    
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);  // Don't write to depth buffer
+    
+    // Adjust cloud color based on time of day
+    float cloudR = 1.0f, cloudG = 1.0f, cloudB = 1.0f;
+    float cloudAlphaMult = 1.0f;
+    
+    switch (currentTime) {
+        case TimeOfDay::MORNING:
+            cloudR = 1.0f; cloudG = 0.95f; cloudB = 0.9f;
+            break;
+        case TimeOfDay::NOON:
+            cloudR = 1.0f; cloudG = 1.0f; cloudB = 1.0f;
+            break;
+        case TimeOfDay::SUNSET:
+            cloudR = 1.0f; cloudG = 0.75f; cloudB = 0.6f;
+            break;
+        case TimeOfDay::NIGHT:
+            cloudR = 0.4f; cloudG = 0.4f; cloudB = 0.5f;
+            cloudAlphaMult = 0.4f;  // Fainter clouds at night
+            break;
+    }
+    
+    // Render each cloud as a FLAT HORIZONTAL quad (not billboard)
+    for (int i = 0; i < MAX_CLOUDS; i++) {
+        // Clouds are at FIXED world positions (stationary)
+        float cloudX = clouds[i].x;
+        float cloudY = clouds[i].y;
+        float cloudZ = clouds[i].z;
+        
+        // Distance from player for culling and fade
+        float dx = cloudX - playerPosition.x;
+        float dz = cloudZ - playerPosition.z;
+        float dist = sqrt(dx * dx + dz * dz);
+        
+        // Skip clouds that are too far (optimization)
+        if (dist > 1200.0f) continue;
+        
+        float size = clouds[i].size;
+        float alpha = clouds[i].alpha * cloudAlphaMult;
+        
+        // Fade clouds based on distance
+        if (dist > 800.0f) {
+            alpha *= 1.0f - (dist - 800.0f) / 400.0f;
+        }
+        
+        if (alpha < 0.05f) continue;  // Skip nearly invisible clouds
+        
+        // Bind appropriate cloud texture
+        glBindTexture(GL_TEXTURE_2D, tex_cloud[clouds[i].textureIndex]);
+        glColor4f(cloudR, cloudG, cloudB, alpha);
+        
+        // Pre-calculate rotation for this cloud (fixed rotation, doesn't change)
+        float rotRad = clouds[i].rotation * 3.14159f / 180.0f;
+        float cosR = cos(rotRad);
+        float sinR = sin(rotRad);
+        
+        // Flat horizontal quad with fixed rotation around Y axis
+        // Corners before rotation
+        float corners[4][2] = {
+            {-size, -size},
+            { size, -size},
+            { size,  size},
+            {-size,  size}
+        };
+        
+        glBegin(GL_QUADS);
+        for (int c = 0; c < 4; c++) {
+            // Apply Y-axis rotation to corner
+            float rx = corners[c][0] * cosR - corners[c][1] * sinR;
+            float rz = corners[c][0] * sinR + corners[c][1] * cosR;
+            
+            glTexCoord2f(c == 0 || c == 3 ? 0.0f : 1.0f, c < 2 ? 0.0f : 1.0f);
+            glVertex3f(cloudX + rx, cloudY, cloudZ + rz);
+        }
+        glEnd();
+    }
+    
+    glDepthMask(GL_TRUE);
     glPopAttrib();
 }

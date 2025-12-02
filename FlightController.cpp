@@ -353,9 +353,9 @@ void FlightController::renderWingLights() {
     // Model Y = World -Z (forward/back in model becomes up/down after rotation)
     // Model Z = World Y (up/down in model becomes forward/back after rotation)
     
-    // Wing tip positions - on the actual wing tips
-    float wingSpan = 5.5f;     // Half wing span (X axis - left/right)
-    float wingY = 0.3f;        // Slightly below center (becomes Z after rotation)
+    // Wing tip positions - moved further out from plane body
+    float wingSpan = 4.0f;     // Further out on wings (X axis - left/right)
+    float wingY = 0.2f;        // Slightly below center (becomes Z after rotation)
     float wingZ = 0.0f;        // Center of wing chord (becomes -Y after rotation)
     
     // Blinking effect - on for 0.15s, off for 0.85s every second
@@ -400,22 +400,22 @@ void FlightController::renderWingLights() {
     if (strobeOn) {
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);  // Bright white
         glPushMatrix();
-        glTranslatef(0.0f, -1.5f, -4.5f);  // Tail position (adjusted for rotation)
+        glTranslatef(0.0f, -0.8f, -4.5f);  // Tail position - lowered
         glutSolidSphere(0.2f, 8, 8);
         glPopMatrix();
         
         // White glow halo
         glColor4f(1.0f, 1.0f, 1.0f, 0.5f);
         glPushMatrix();
-        glTranslatef(0.0f, -1.5f, -4.5f);
+        glTranslatef(0.0f, -0.8f, -4.5f);
         glutSolidSphere(0.5f, 8, 8);
         glPopMatrix();
     }
     
-    // Steady white navigation light on nose (always on at night)
+    // Steady white navigation light on nose (always on at night) - lowered
     glColor4f(1.0f, 1.0f, 0.9f, 0.9f);
     glPushMatrix();
-    glTranslatef(0.0f, 0.2f, 3.0f);  // Nose of plane
+    glTranslatef(0.0f, 0.0f, 3.0f);  // Nose of plane - lowered
     glutSolidSphere(0.15f, 8, 8);
     glPopMatrix();
     

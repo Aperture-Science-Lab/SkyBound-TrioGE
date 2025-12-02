@@ -4,6 +4,7 @@
 #include "Model_3DS.h"
 #include "GLTexture.h"
 #include "GameManager.h"
+#include "Level1.h"
 #include "Level2.h"
 #include <Vector3f.h>
 #include <glut.h>
@@ -167,12 +168,16 @@ int main(int argc, char** argv)
 	myInit();
     
     // Initialize GameManager and register levels
+    Level1* carrierLevel = new Level1();
     Level2* flightLevel = new Level2();
+    
+    GameManager::getInstance().registerLevel("CarrierMission", carrierLevel);
     GameManager::getInstance().registerLevel("FlightSimulator", flightLevel);
     
-    // Initialize and switch to the first level
+    // Initialize and switch to Level 1 (Carrier Mission)
+    carrierLevel->init();
     flightLevel->init();
-    GameManager::getInstance().switchToLevel("FlightSimulator");
+    GameManager::getInstance().switchToLevel("CarrierMission");
     
     lastTime = glutGet(GLUT_ELAPSED_TIME);
 

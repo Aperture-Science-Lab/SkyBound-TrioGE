@@ -19,6 +19,15 @@ struct DayLighting {
     bool showLensFlare;
 };
 
+// Billboard cloud structure
+struct CloudBillboard {
+    float x, y, z;        // Position in world
+    float size;           // Cloud size
+    int textureIndex;     // Which cloud texture (0-2)
+    float rotation;       // Billboard rotation
+    float alpha;          // Transparency
+};
+
 class SkySystem {
 public:
     SkySystem();
@@ -32,6 +41,9 @@ public:
     
     // Render the sky sphere centered on player position
     void renderSky(const Vector3f& playerPosition);
+    
+    // Render billboard clouds (call after renderSky, before scene objects)
+    void renderClouds(const Vector3f& playerPosition);
     
     // Render lens flare effect (call after scene, before HUD)
     void renderLensFlare(const Vector3f& playerPosition, const Vector3f& playerForward, 
@@ -65,6 +77,15 @@ private:
     unsigned int tex_sky_sunset;
     unsigned int tex_sky_night;
     unsigned int tex_flare[10];  // More flare textures for AAA quality
+    
+    // Cloud textures and data
+    unsigned int tex_cloud[3];   // 3 cloud textures
+    static const int MAX_CLOUDS = 60;  // Number of clouds
+    CloudBillboard clouds[60];   // Cloud instances
+    bool cloudsInitialized;
+    
+    // Initialize cloud positions
+    void initClouds();
     
     Vector3f sunDirection;
     float sunIntensity;
