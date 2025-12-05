@@ -207,18 +207,22 @@ void Level1::initRings() {
     rings.clear();
     ringsPassedCount = 0;
     
-    // Create a series of rings forming a path in the sky
+    
     // Starting from carrier, going up and around
     float startX = 0.0f;
-    float startY = 30.0f;
-    float startZ = 50.0f;
+    float startY = 70.0f;  
+    float startZ = 200.0f;  
     
+    float spacingZ = 300.0f;  
+    float heightIncrement = 10.0f;  
+
     for (int i = 0; i < totalRings; i++) {
         Ring ring;
         
-        // Create a winding path through the sky
-        float t = (float)i / (float)(totalRings - 1);
-        float angle = t * 3.14159f * 2.0f;  // Full circle path
+        // Straight line along Z axis
+        ring.position.x = startX;
+        ring.position.y = startY + (i * heightIncrement);  // Gradually increase height
+        ring.position.z = startZ + (i * spacingZ);  // Space rings evenly along Z
         
         ring.position.x = startX + sin(angle) * 150.0f + (rand() % 50 - 25);
         ring.position.y = startY + t * 80.0f + sin(t * 6.28f) * 20.0f;  // Gradually higher
@@ -492,8 +496,20 @@ void Level1::checkRingPassage() {
     
     Vector3f planePos = flightSim->player.position;
     
-    for (auto& ring : rings) {
-        if (ring.passed) continue;
+    // Find the next ring that needs to be passed (first unpassed ring in order)
+    int nextRingIndex = -1;
+    for (int i = 0; i < (int)rings.size(); i++) {
+        if (!rings[i].passed) {
+            nextRingIndex = i;
+            break;
+        }
+    }
+    
+    // If all rings are passed, we're done
+    if (nextRingIndex == -1) return;
+    
+    // Only check collision with the next ring in sequence
+    Ring& ring = rings[nextRingIndex];
         
         // Check if plane passed through ring
         float dx = planePos.x - ring.position.x;
@@ -508,7 +524,20 @@ void Level1::checkRingPassage() {
             if (distFromCenter < ring.radius) {
                 ring.passed = true;
                 ringsPassedCount++;
-                score += ring.isGolden ? 500 : 100;
+
+            // Check if this is the golden ring and all other rings are passed
+            if (ring.isGolden && ringsPassedCount >= totalRings) {
+                // All rings passed including golden ring - switch to Level 2
+                score += 500;  // Golden ring bonus
+                score += (int)(gameTimer * 10);  // Time bonus
+                soundSystem.playCoinSound();
+
+                // Trigger level switch immediately to Level 2
+                levelComplete = true;
+                return;
+            }
+            else {
+                score += 100;
                 soundSystem.playCoinSound();
             }
         }
@@ -932,16 +961,41 @@ void Level1::renderRing(const Ring& ring) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
+    // Find the next ring that needs to be passed (first unpassed ring in order)
+    int nextRingIndex = -1;
+    for (int i = 0; i < (int)rings.size(); i++) {
+        if (!rings[i].passed) {
+            nextRingIndex = i;
+            break;
+        }
+    }
+    
+    // Determine if this is the next ring to pass through
+    bool isNextRing = false;
+    if (nextRingIndex != -1) {
+        // Check if this ring matches the next ring position (by comparing position)
+        const Ring& nextRing = rings[nextRingIndex];
+        if (ring.position.x == nextRing.position.x && 
+            ring.position.y == nextRing.position.y && 
+            ring.position.z == nextRing.position.z) {
+            isNextRing = true;
+        }
+    }
+    
     // Ring color
     if (ring.passed) {
         glColor4f(0.3f, 0.3f, 0.3f, 0.5f);  // Dim gray for passed rings
-    } else if (ring.isGolden) {
-        // Golden ring - pulsing glow
+    } else if (ring.isGolden && isNextRing) {
+        // Golden ring when it's the next one to pass - pulsing glow
         float pulse = 0.7f + 0.3f * sin(ringTimer * 3.0f);
         glColor4f(1.0f * pulse, 0.84f * pulse, 0.0f, 0.9f);
+    } else if (isNextRing) {
+        // Next ring to pass - bright blue
+        float pulse = 0.8f + 0.2f * sin(ringTimer * 4.0f);
+        glColor4f(0.0f, 0.6f * pulse, 1.0f * pulse, 0.9f);
     } else {
-        // Regular ring - cyan/blue
-        glColor4f(0.0f, 0.8f, 1.0f, 0.8f);
+        // Other unpassed rings - grey
+        glColor4f(0.5f, 0.5f, 0.5f, 0.6f);
     }
     
     // Draw ring using torus
@@ -970,14 +1024,13 @@ void Level1::renderRing(const Ring& ring) {
         glEnd();
     }
     
-    // Inner glow for unpassed rings
-    if (!ring.passed) {
+    // Inner glow for next ring to pass
+    if (!ring.passed && isNextRing) {
         if (ring.isGolden) {
             glColor4f(1.0f, 0.9f, 0.3f, 0.3f);
-        } else {
-            glColor4f(0.0f, 0.5f, 1.0f, 0.2f);
+            glutSolidSphere(ring.radius * 0.8f, 16, 16);
         }
-        glutSolidSphere(ring.radius * 0.8f, 16, 16);
+        
     }
     
     glDisable(GL_BLEND);
