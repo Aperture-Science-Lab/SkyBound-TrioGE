@@ -1037,7 +1037,7 @@ void Level2::initBuildings() {
         
         building.modelIndex = rand() % 10;  // Random building type
         building.rotation = (float)(rand() % 360);  // Random rotation
-        building.scale = 0.3f + (float)(rand() % 30) / 100.0f;  // 0.3 to 0.6 scale
+        building.scale = 1.5f + (float)(rand() % 150) / 100.0f;  // 0.3 to 0.6 scale
         
         // Collision box dimensions (approximate for buildings)
         building.width = 15.0f * building.scale;
