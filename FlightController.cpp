@@ -80,8 +80,8 @@ void FlightController::handleMouse(int x, int y, int centerX, int centerY) {
 
     // Pitch (Mouse Y) - Always active (needed to lift nose for takeoff)
     if (fabs(dy) > 0.1f) {
-        rotateVector(player.forward, player.right, -dy * sensitivity);
-        rotateVector(player.up, player.right, -dy * sensitivity);
+        rotateVector(player.forward, player.right, dy * sensitivity);
+        rotateVector(player.up, player.right, dy * sensitivity);
     }
 
     // Re-orthogonalize
