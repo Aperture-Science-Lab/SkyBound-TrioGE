@@ -206,33 +206,28 @@ void Level1::loadAssets() {
 void Level1::initRings() {
     rings.clear();
     ringsPassedCount = 0;
+
     
-    
-    // Starting from carrier, going up and around
     float startX = 0.0f;
     float startY = 70.0f;  
     float startZ = 200.0f;  
-    
+
     float spacingZ = 300.0f;  
     float heightIncrement = 10.0f;  
 
     for (int i = 0; i < totalRings; i++) {
         Ring ring;
-        
+
         // Straight line along Z axis
         ring.position.x = startX;
         ring.position.y = startY + (i * heightIncrement);  // Gradually increase height
         ring.position.z = startZ + (i * spacingZ);  // Space rings evenly along Z
-        
-        ring.position.x = startX + sin(angle) * 150.0f + (rand() % 50 - 25);
-        ring.position.y = startY + t * 80.0f + sin(t * 6.28f) * 20.0f;  // Gradually higher
-        ring.position.z = startZ + i * 80.0f + cos(angle) * 100.0f;
-        
+
         ring.radius = 15.0f + (rand() % 10);  // Ring radius 15-25
         ring.passed = false;
         ring.isGolden = (i == totalRings - 1);  // Last ring is golden
         ring.rotationAngle = (float)(rand() % 360);
-        
+
         rings.push_back(ring);
     }
 }
@@ -295,9 +290,9 @@ void Level1::update(float deltaTime) {
             float deckY = carrierPosition.y + 3.0f;
             if (flightSim->player.position.y < deckY) {
                 flightSim->player.position.y = deckY;
-            flightSim->player.velocity.y = 0.0f;
+                flightSim->player.velocity.y = 0.0f;
+            }
         }
-    }
     }
     
     // Handle crash state (only if not spawn protected)
@@ -493,9 +488,9 @@ void Level1::spawnRocket() {
 
 void Level1::checkRingPassage() {
     if (!flightSim) return;
-    
+
     Vector3f planePos = flightSim->player.position;
-    
+
     // Find the next ring that needs to be passed (first unpassed ring in order)
     int nextRingIndex = -1;
     for (int i = 0; i < (int)rings.size(); i++) {
@@ -510,20 +505,20 @@ void Level1::checkRingPassage() {
     
     // Only check collision with the next ring in sequence
     Ring& ring = rings[nextRingIndex];
-        
-        // Check if plane passed through ring
-        float dx = planePos.x - ring.position.x;
-        float dy = planePos.y - ring.position.y;
-        float dz = planePos.z - ring.position.z;
-        float distSq = dx * dx + dy * dy + dz * dz;
-        
-        // Must be close enough and within ring radius
-        if (distSq < ring.radius * ring.radius * 2.0f) {
-            // Check if within ring plane (simple check)
-            float distFromCenter = sqrt(dx * dx + dy * dy);
-            if (distFromCenter < ring.radius) {
-                ring.passed = true;
-                ringsPassedCount++;
+    
+    // Check if plane passed through ring
+    float dx = planePos.x - ring.position.x;
+    float dy = planePos.y - ring.position.y;
+    float dz = planePos.z - ring.position.z;
+    float distSq = dx * dx + dy * dy + dz * dz;
+
+    // Must be close enough and within ring radius
+    if (distSq < ring.radius * ring.radius * 2.0f) {
+        // Check if within ring plane (simple check)
+        float distFromCenter = sqrt(dx * dx + dy * dy);
+        if (distFromCenter < ring.radius) {
+            ring.passed = true;
+            ringsPassedCount++;
 
             // Check if this is the golden ring and all other rings are passed
             if (ring.isGolden && ringsPassedCount >= totalRings) {
@@ -815,7 +810,7 @@ void Level1::renderWater() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
-    float size = 2000.0f;
+    float size = 6000.0f;
     float texScale = 0.003f;
     
     // Animated texture offset - slides the water texture
@@ -1029,7 +1024,7 @@ void Level1::renderRing(const Ring& ring) {
         if (ring.isGolden) {
             glColor4f(1.0f, 0.9f, 0.3f, 0.3f);
             glutSolidSphere(ring.radius * 0.8f, 16, 16);
-        }
+        } 
         
     }
     

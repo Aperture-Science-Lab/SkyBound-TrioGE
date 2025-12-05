@@ -1,7 +1,3 @@
-﻿  FlightController.cpp
-  Level1.cpp
-  Level2.cpp
-  OpenGLMeshLoader.cpp
-  Generating Code...
+﻿  OpenGLMeshLoader.cpp
 CrashSystem.obj : warning LNK4075: ignoring '/EDITANDCONTINUE' due to '/INCREMENTAL:NO' specification
-  OpenGLMeshLoader.vcxproj -> C:\Users\Victus\Documents\Sky-bound\Debug\OpenGLMeshLoader19.exe
+  OpenGLMeshLoader.vcxproj -> C:\Users\fadyb\Downloads\Sky-bound\Sky-bound\Debug\OpenGLMeshLoader19.exe
