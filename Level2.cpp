@@ -158,12 +158,24 @@ void Level2::init() {
     initFuelContainers();     // Initialize fuel collectables
     initBuildings();          // Initialize building obstacles
     initAirport();            // Initialize airport landing target
-    
+
     // Initialize game timer and score
     gameTimer = maxGameTime;  // 300 seconds countdown (5 minutes for full day/night cycle)
     score = 0;
     gameOver = false;
     showGameOver = false;
+
+    if (flightSim) {
+        flightSim->player.position = Vector3f(-800.0f, 80.0f, -800.0f);
+        flightSim->player.forward = Vector3f(0.707f, 0.0f, 0.707f);
+        flightSim->player.forward.unit();
+        flightSim->player.up = Vector3f(0, 1, 0);
+        flightSim->player.right = flightSim->player.forward.cross(flightSim->player.up);
+        flightSim->player.right.unit();
+        flightSim->player.velocity = flightSim->player.forward * 35.0f;  
+        flightSim->isGrounded = false;
+        flightSim->isCrashed = false;
+    }
 }
 
 void Level2::loadAssets() {
@@ -610,7 +622,7 @@ void Level2::renderGrass() {
 void Level2::handleKeyboard(unsigned char key, bool pressed) {
     if (!active) return;
     if (key == 27) exit(0);
-    
+    if (flightSim) flightSim->handleInput(key, pressed);
     // Reset key - full game reset including plane
     if ((key == 'r' || key == 'R') && pressed) {
         crashSystem.reset();
@@ -625,20 +637,20 @@ void Level2::handleKeyboard(unsigned char key, bool pressed) {
         hasTouchedDown = false;
         touchdownLocalZ = 0.0f;
         winMessageTimer = 0.0f;
-        
+
         // Reinitialize fuel containers
         initFuelContainers();
-        
-        // Reset plane - spawn on runway
+
         if (flightSim) {
-            flightSim->reset();
-            flightSim->player.position = Vector3f(-800.0f, 0.5f, -800.0f);
-            flightSim->player.forward = Vector3f(0, 0, 1);
+            flightSim->player.position = Vector3f(-800.0f, 80.0f, -800.0f);
+            flightSim->player.forward = Vector3f(0.707f, 0.0f, 0.707f);
+            flightSim->player.forward.unit();
             flightSim->player.up = Vector3f(0, 1, 0);
-            flightSim->player.right = Vector3f(1, 0, 0);
-            flightSim->player.velocity = Vector3f(0, 0, 0);
-            flightSim->player.throttle = 0.0f;
-            flightSim->isGrounded = true;
+            flightSim->player.right = flightSim->player.forward.cross(flightSim->player.up);
+            flightSim->player.right.unit();
+            flightSim->player.velocity = flightSim->player.forward * 35.0f;
+            flightSim->player.throttle = 0.7f;  
+            flightSim->isGrounded = false;
             flightSim->isCrashed = false;
         }
     }
@@ -648,7 +660,7 @@ void Level2::handleKeyboard(unsigned char key, bool pressed) {
         shootingSystem.fire(flightSim->player.position, flightSim->player.forward);
     }
     
-    if (flightSim) flightSim->handleInput(key, pressed);
+    
 }
 
 void Level2::handleKeyboardUp(unsigned char key) {
@@ -669,7 +681,7 @@ void Level2::onEnter() {
     screenWidth = glutGet(GLUT_WINDOW_WIDTH);
     screenHeight = glutGet(GLUT_WINDOW_HEIGHT);
     glutSetCursor(GLUT_CURSOR_NONE);
-    
+
     // Reset ALL game state when entering Level 2 (important for level transitions)
     gameTimer = maxGameTime;
     score = 0;
@@ -680,26 +692,39 @@ void Level2::onEnter() {
     hasTouchedDown = false;
     touchdownLocalZ = 0.0f;
     winMessageTimer = 0.0f;
-    
+
     // Reset systems
     crashSystem.reset();
     soundSystem.reset();
     shootingSystem.reset();
-    
+
     // Reinitialize collectables
     initFuelContainers();
-    
-    // Reset plane state
+
+    // Reset plane state - START IN THE AIR AND FLYING
     if (flightSim) {
-        flightSim->reset();
-        // Start on ground at runway for Level 2
-        flightSim->player.position = Vector3f(-800.0f, 0.5f, -800.0f);
-        flightSim->player.forward = Vector3f(0, 0, 1);
+        // Set position at altitude
+        flightSim->player.position = Vector3f(-800.0f, 80.0f, -800.0f);
+
+        // Set forward direction
+        flightSim->player.forward = Vector3f(0.707f, 0.0f, 0.707f);
+        flightSim->player.forward.unit();
+
+        // Set up vector
         flightSim->player.up = Vector3f(0, 1, 0);
-        flightSim->player.right = Vector3f(1, 0, 0);
-        flightSim->player.velocity = Vector3f(0, 0, 0);
-        flightSim->player.throttle = 0.0f;
-        flightSim->isGrounded = true;
+
+        // Calculate right vector
+        flightSim->player.right = flightSim->player.forward.cross(flightSim->player.up);
+        flightSim->player.right.unit();
+
+        // Set velocity
+        flightSim->player.velocity = flightSim->player.forward * 35.0f;
+
+        // Set throttle
+        flightSim->player.throttle = 0.7f;
+
+        // IMPORTANT: In the air, not grounded
+        flightSim->isGrounded = false;
         flightSim->isCrashed = false;
     }
 }
