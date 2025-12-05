@@ -118,8 +118,8 @@ Level1::Level1() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(
     waterLevel(-2.0f), portHeight(3.0f),
     spawnProtectionTimer(3.0f), hasSpawnProtection(true) {
     
-    // Aircraft carrier positioned in water - raised up
-    carrierPosition = Vector3f(0.0f, 50.0f, -100.0f);  // Raised above water
+    // Aircraft carrier positioned in water at surface level
+    carrierPosition = Vector3f(0.0f, waterLevel + 2.0f, -100.0f);  // At water surface
     carrierRotation = 0.0f;
     carrierScale = 0.001f;  // Appropriate scale
 }
@@ -131,19 +131,19 @@ Level1::~Level1() {
 void Level1::init() {
     flightSim = new FlightController();
     
-    // Start plane in the air, above and ahead of the carrier - ready to fly
-    // Must set AFTER constructor since reset() is called in constructor
-    flightSim->player.position = Vector3f(0.0f, 60.0f, 80.0f);  // Much higher altitude, further forward
-    flightSim->player.velocity = Vector3f(0, 5.0f, 50.0f);  // Strong forward + slight upward velocity
-    flightSim->player.forward = Vector3f(0, 0.1f, 1).unit();  // Slightly pitched up
+    // Start plane on the carrier deck - stationary, ready for takeoff
+    // Position plane at the back of the carrier deck
+    flightSim->player.position = Vector3f(carrierPosition.x, carrierPosition.y + 3.0f, carrierPosition.z - 25.0f);
+    flightSim->player.velocity = Vector3f(0, 0, 0);  // Stationary
+    flightSim->player.forward = Vector3f(0, 0, 1);  // Facing forward along carrier
     flightSim->player.up = Vector3f(0, 1, 0);
     flightSim->player.right = Vector3f(1, 0, 0);
-    flightSim->player.throttle = 0.7f;  // Higher throttle to maintain speed
-    flightSim->isGrounded = false;  // Start in flight
+    flightSim->player.throttle = 0.0f;  // Engine off
+    flightSim->isGrounded = true;  // Start on ground
     flightSim->isCrashed = false;
     
     // Spawn protection - cannot crash for first 3 seconds
-    spawnProtectionTimer = 3.0f;
+    spawnProtectionTimer = 5.0f;
     hasSpawnProtection = true;
     
     loadAssets();
@@ -270,7 +270,7 @@ void Level1::update(float deltaTime) {
         levelCompleteTimer += deltaTime;
         if (levelCompleteTimer > 3.0f) {
             // Transition to Level 2
-            GameManager::getInstance().switchToLevel("FlightSimulator");
+            GameManager::getInstance().switchToLevel("Level2");
         }
         return;
     }
@@ -286,11 +286,14 @@ void Level1::update(float deltaTime) {
         if (flightSim->isCrashed) {
             flightSim->isCrashed = false;
         }
-        // Also keep plane above water during spawn protection
-        if (flightSim->player.position.y < 10.0f) {
-            flightSim->player.position.y = 10.0f;
+        // Keep plane on carrier deck during spawn protection
+        if (isOnCarrierDeck(flightSim->player.position)) {
+            float deckY = carrierPosition.y + 3.0f;
+            if (flightSim->player.position.y < deckY) {
+                flightSim->player.position.y = deckY;
             flightSim->player.velocity.y = 0.0f;
         }
+    }
     }
     
     // Handle crash state (only if not spawn protected)
@@ -315,7 +318,54 @@ void Level1::update(float deltaTime) {
         
         bool wasCrashedBefore = flightSim->isCrashed;
         
+        // Store old position for carrier deck collision
+        Vector3f oldPos = flightSim->player.position;
+        
         flightSim->update(deltaTime);
+        
+        // Carrier deck collision detection - check if plane is on carrier
+        if (isOnCarrierDeck(flightSim->player.position)) {
+            float deckY = carrierPosition.y + 3.0f;  // Deck height
+            
+            // If plane is at or below deck level
+            if (flightSim->player.position.y <= deckY + 0.5f) {
+                flightSim->player.position.y = deckY + 0.5f;  // Place on deck
+                
+                // Check if landing or already on deck
+                if (!flightSim->isGrounded) {
+                    float verticalSpeed = flightSim->player.velocity.y;
+                    float speed = flightSim->getSpeed();
+                    
+                    // Hard crash: Falling too fast or hitting deck nose first
+                    if (verticalSpeed < -10.0f || (speed > 40.0f && flightSim->player.forward.y < -0.2f)) {
+                        if (!hasSpawnProtection) {
+                            flightSim->isCrashed = true;
+                            flightSim->player.throttle = 0;
+                        }
+                    } else {
+                        // Successful landing on carrier
+                        flightSim->isGrounded = true;
+                        flightSim->player.velocity.y = 0;
+                        
+                        // Flatten out pitch slightly on landing
+                        if (flightSim->player.forward.y < 0) {
+                            flightSim->player.forward.y = 0;
+                            flightSim->player.forward = flightSim->player.forward.unit();
+                        }
+                    }
+                } else {
+                    // Already on carrier deck
+                    flightSim->player.velocity.y = 0;  // Cancel gravity
+                    
+                    // Allow takeoff from carrier
+                    float speed = flightSim->getSpeed();
+                    if (speed > 50.0f && flightSim->player.forward.y > 0.1f) {  // TAKEOFF_SPEED = 50.0f
+                        flightSim->isGrounded = false;  // Liftoff!
+                        flightSim->player.position.y += 0.1f;  // Unstick from deck
+                    }
+                }
+            }
+        }
         
         // During spawn protection, prevent any crash from sticking
         if (hasSpawnProtection && flightSim->isCrashed) {
@@ -612,17 +662,18 @@ void Level1::renderPortLights() {
 }
 
 bool Level1::isOnCarrierDeck(const Vector3f& pos) {
-    // Carrier deck bounds (adjusted for new scale and position)
-    // With scale 0.015, the carrier is much smaller
-    float deckMinX = carrierPosition.x - 5.0f;
-    float deckMaxX = carrierPosition.x + 5.0f;
-    float deckMinZ = carrierPosition.z - 30.0f;
-    float deckMaxZ = carrierPosition.z + 30.0f;
-    float deckY = carrierPosition.y + 2.0f;  // Deck height
+    // Carrier deck bounds (adjusted for scale 0.001)
+    // The carrier model at scale 0.001 is much larger than before
+    // Typical carrier deck dimensions after scaling
+    float deckMinX = carrierPosition.x - 25.0f;  // Wider deck
+    float deckMaxX = carrierPosition.x + 25.0f;
+    float deckMinZ = carrierPosition.z - 40.0f;  // Longer deck for takeoff
+    float deckMaxZ = carrierPosition.z + 40.0f;
+    float deckY = carrierPosition.y + 3.0f;  // Deck height above carrier base
     
     return (pos.x >= deckMinX && pos.x <= deckMaxX &&
             pos.z >= deckMinZ && pos.z <= deckMaxZ &&
-            pos.y <= deckY + 2.0f && pos.y >= deckY - 1.0f);
+            pos.y <= deckY + 3.0f && pos.y >= deckY - 1.0f);
 }
 
 void Level1::render() {
@@ -1540,17 +1591,21 @@ void Level1::handleKeyboard(unsigned char key, bool pressed) {
         initRockets();
         shootingSystem.reset();  // Reset shooting system
         
-        // Reset plane - start in the air
+        // Reset plane - start on carrier deck, stationary
         if (flightSim) {
-            flightSim->player.position = Vector3f(0.0f, 40.0f, 50.0f);
-            flightSim->player.velocity = Vector3f(0, 0, 30.0f);
-            flightSim->player.forward = Vector3f(0, 0, 1);
+            flightSim->player.position = Vector3f(carrierPosition.x, carrierPosition.y + 3.0f, carrierPosition.z - 25.0f);
+            flightSim->player.velocity = Vector3f(0, 0, 0);  // Stationary
+            flightSim->player.forward = Vector3f(0, 0, 1);  // Facing forward along carrier
             flightSim->player.up = Vector3f(0, 1, 0);
             flightSim->player.right = Vector3f(1, 0, 0);
-            flightSim->player.throttle = 0.5f;
-            flightSim->isGrounded = false;
+            flightSim->player.throttle = 0.0f;  // Engine off
+            flightSim->isGrounded = true;  // Start on deck
             flightSim->isCrashed = false;
         }
+        
+        // Reset spawn protection
+        spawnProtectionTimer = 3.0f;
+        hasSpawnProtection = true;
     }
     
     // Shooting - Space key to fire
