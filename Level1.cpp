@@ -1145,6 +1145,220 @@ void Level1::renderHUD() {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
     }
     
+    // Draw Speed indicator (bottom left)
+    if (flightSim) {
+        float speed = flightSim->getSpeed();
+        
+        // Background box
+        glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
+        glBegin(GL_QUADS);
+        glVertex2f(10, 60);
+        glVertex2f(180, 60);
+        glVertex2f(180, 10);
+        glVertex2f(10, 10);
+        glEnd();
+        
+        // Speed color changes based on value
+        if (speed < 30.0f) {
+            glColor3f(1.0f, 0.3f, 0.3f);  // Red (slow/stalling)
+        } else if (speed < 50.0f) {
+            glColor3f(1.0f, 1.0f, 0.0f);  // Yellow (takeoff speed)
+        } else if (speed < 80.0f) {
+            glColor3f(0.0f, 1.0f, 0.0f);  // Green (good speed)
+        } else {
+            glColor3f(0.0f, 0.8f, 1.0f);  // Cyan (high speed)
+        }
+        
+        sprintf_s(buffer, sizeof(buffer), "Speed: %.0f", speed);
+        glRasterPos2f(20, 35);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+        }
+        
+        // Draw speed bar
+        float speedBarWidth = 150.0f;
+        float speedBarFill = (speed / 120.0f) * speedBarWidth;  // Max speed 120 for display
+        if (speedBarFill > speedBarWidth) speedBarFill = speedBarWidth;
+        
+        // Speed bar background
+        glColor4f(0.3f, 0.3f, 0.3f, 0.8f);
+        glBegin(GL_QUADS);
+        glVertex2f(15, 28);
+        glVertex2f(15 + speedBarWidth, 28);
+        glVertex2f(15 + speedBarWidth, 22);
+        glVertex2f(15, 22);
+        glEnd();
+        
+        // Speed bar fill (same color as text)
+        if (speed < 30.0f) {
+            glColor4f(1.0f, 0.3f, 0.3f, 0.9f);
+        } else if (speed < 50.0f) {
+            glColor4f(1.0f, 1.0f, 0.0f, 0.9f);
+        } else if (speed < 80.0f) {
+            glColor4f(0.0f, 1.0f, 0.0f, 0.9f);
+        } else {
+            glColor4f(0.0f, 0.8f, 1.0f, 0.9f);
+        }
+        
+        glBegin(GL_QUADS);
+        glVertex2f(15, 28);
+        glVertex2f(15 + speedBarFill, 28);
+        glVertex2f(15 + speedBarFill, 22);
+        glVertex2f(15, 22);
+        glEnd();
+        
+        // Draw takeoff speed marker (50.0 units)
+        float takeoffMarkerX = 15 + (50.0f / 120.0f) * speedBarWidth;
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glBegin(GL_LINES);
+        glVertex2f(takeoffMarkerX, 28);
+        glVertex2f(takeoffMarkerX, 19);
+        glEnd();
+    }
+    
+    // Draw Attitude Indicator (Pitch, Roll, Yaw) - Bottom Right
+    if (flightSim) {
+        float centerX = screenWidth - 120.0f;
+        float centerY = 120.0f;
+        float radius = 80.0f;
+        
+        // Background box
+        glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
+        glBegin(GL_QUADS);
+        glVertex2f(screenWidth - 230, 220);
+        glVertex2f(screenWidth - 10, 220);
+        glVertex2f(screenWidth - 10, 20);
+        glVertex2f(screenWidth - 230, 20);
+        glEnd();
+        
+        // Calculate pitch, roll, yaw from plane's orientation vectors
+        Vector3f forward = flightSim->player.forward;
+        Vector3f up = flightSim->player.up;
+        Vector3f right = flightSim->player.right;
+        
+        // Pitch: angle between forward vector and horizontal plane (in degrees)
+        float pitch = asin(forward.y) * 180.0f / 3.14159f;
+        
+        // Roll: angle of tilt left/right (in degrees)
+        float roll = atan2(right.y, up.y) * 180.0f / 3.14159f;
+        
+        // Yaw: compass heading (in degrees) - angle in XZ plane
+        float yaw = atan2(forward.x, forward.z) * 180.0f / 3.14159f;
+        if (yaw < 0) yaw += 360.0f;
+        
+        // Draw artificial horizon (Roll and Pitch indicator)
+        glPushMatrix();
+        glTranslatef(centerX, centerY, 0);
+        
+        // Draw sky/ground horizon
+        glRotatef(-roll, 0, 0, 1);  // Rotate by roll angle
+        
+        // Sky (upper half)
+        glColor4f(0.3f, 0.5f, 0.8f, 0.7f);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(0, 0);
+        for (int i = 0; i <= 180; i += 10) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(cos(angle) * radius, sin(angle) * radius + pitch * 1.5f);
+        }
+        glEnd();
+        
+        // Ground (lower half)
+        glColor4f(0.4f, 0.3f, 0.2f, 0.7f);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(0, 0);
+        for (int i = 180; i <= 360; i += 10) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(cos(angle) * radius, sin(angle) * radius + pitch * 1.5f);
+        }
+        glEnd();
+        
+        // Horizon line
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glLineWidth(2.0f);
+        glBegin(GL_LINES);
+        glVertex2f(-radius, pitch * 1.5f);
+        glVertex2f(radius, pitch * 1.5f);
+        glEnd();
+        glLineWidth(1.0f);
+        
+        // Pitch ladder marks (every 10 degrees)
+        glColor3f(1.0f, 1.0f, 1.0f);
+        for (int p = -30; p <= 30; p += 10) {
+            if (p == 0) continue;  // Skip zero (horizon)
+            float yOffset = (pitch - p) * 1.5f;
+            if (fabs(yOffset) < radius) {
+                glBegin(GL_LINES);
+                glVertex2f(-20, yOffset);
+                glVertex2f(20, yOffset);
+                glEnd();
+            }
+        }
+        
+        glPopMatrix();
+        
+        // Center reference mark (fixed airplane symbol)
+        glColor3f(1.0f, 1.0f, 0.0f);
+        glLineWidth(3.0f);
+        glBegin(GL_LINES);
+        // Left wing
+        glVertex2f(centerX - 40, centerY);
+        glVertex2f(centerX - 10, centerY);
+        // Right wing
+        glVertex2f(centerX + 10, centerY);
+        glVertex2f(centerX + 40, centerY);
+        // Center dot
+        glVertex2f(centerX - 2, centerY);
+        glVertex2f(centerX + 2, centerY);
+        glEnd();
+        glLineWidth(1.0f);
+        
+        // Outer circle border
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 360; i += 5) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(centerX + cos(angle) * radius, centerY + sin(angle) * radius);
+        }
+        glEnd();
+        
+        // Roll indicator triangle at top
+        glPushMatrix();
+        glTranslatef(centerX, centerY, 0);
+        glRotatef(-roll, 0, 0, 1);
+        glColor3f(1.0f, 0.0f, 0.0f);
+        glBegin(GL_TRIANGLES);
+        glVertex2f(0, radius + 5);
+        glVertex2f(-5, radius - 5);
+        glVertex2f(5, radius - 5);
+        glEnd();
+        glPopMatrix();
+        
+        // Display numerical values
+        glColor3f(1.0f, 1.0f, 1.0f);
+        
+        // Pitch value
+        sprintf_s(buffer, sizeof(buffer), "Pitch: %.0f", pitch);
+        glRasterPos2f(screenWidth - 220, 200);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+        
+        // Roll value
+        sprintf_s(buffer, sizeof(buffer), "Roll: %.0f", roll);
+        glRasterPos2f(screenWidth - 220, 185);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+        
+        // Yaw (heading) value
+        sprintf_s(buffer, sizeof(buffer), "Heading: %.0f", yaw);
+        glRasterPos2f(screenWidth - 220, 30);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+    }
+    
     // Draw altitude warning if flying too high
     if (flightSim && flightSim->player.position.y > 150.0f) {
         glColor4f(1.0f, 0.0f, 0.0f, 0.7f + 0.3f * sin(ringTimer * 5.0f));
