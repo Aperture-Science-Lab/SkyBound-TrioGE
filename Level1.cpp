@@ -339,21 +339,29 @@ void Level1::loadAssets() {
     }
     
     // Load tank textures
-    if (!loadGroundTexture(&tex_tank_rubber, "Models/tank/rubber.bmp")) {
-        printf("Failed to load tank rubber texture\n");
+    auto loadTankTex = [&](GLuint* dst, const char* p1, const char* p2) {
+        if (!loadGroundTexture(dst, p1)) {
+            if (!loadGroundTexture(dst, p2)) {
+                printf("Failed to load %s and %s\n", p1, p2);
+            }
+        }
+    };
+
+    loadTankTex(&tex_tank4, "Models/tank/tank4.bmp", "../Models/tank/tank4.bmp");
+    if (tex_tank4 == 0) {
+        printf("tank4 texture missing; creating fallback color texture\n");
+        unsigned char green[3] = { 90, 120, 80 };
+        glGenTextures(1, &tex_tank4);
+        glBindTexture(GL_TEXTURE_2D, tex_tank4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, green);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
-    if (!loadGroundTexture(&tex_tank1, "Models/tank/tank1.bmp")) {
-        printf("Failed to load tank1 texture\n");
-    }
-    if (!loadGroundTexture(&tex_tank2, "Models/tank/tank2.bmp")) {
-        printf("Failed to load tank2 texture\n");
-    }
-    if (!loadGroundTexture(&tex_tank3, "Models/tank/tank3.bmp")) {
-        printf("Failed to load tank3 texture\n");
-    }
-    if (!loadGroundTexture(&tex_tank4, "Models/tank/tank4.bmp")) {
-        printf("Failed to load tank4 texture\n");
-    }
+    // Force all tank textures to use the single camo texture (tank4.bmp or fallback)
+    tex_tank1 = tex_tank4;
+    tex_tank2 = tex_tank4;
+    tex_tank3 = tex_tank4;
+    tex_tank_rubber = tex_tank4;
     
     // Load carrier texture using custom loader (handles more BMP formats)
     printf("Loading carrier texture...\n");
@@ -417,19 +425,10 @@ void Level1::loadAssets() {
     if (tex_tank4 == 0) tex_tank4 = tex_tank1;
     if (tex_tank_rubber == 0) tex_tank_rubber = tex_tank1;
 
-    // Apply textures using GLTexture loader to keep internal state consistent
-    const char* tankTexPaths[5] = {
-        "Models/tank/tank1.bmp",
-        "Models/tank/tank2.bmp",
-        "Models/tank/tank3.bmp",
-        "Models/tank/tank4.bmp",
-        "Models/tank/rubber.bmp"
-    };
-
+    // Apply single camo texture (tank4.bmp) to every tank material
     for (int m = 0; m < model_tank.numMaterials; ++m) {
-        int slot = m % 5;
-        const char* path = tankTexPaths[slot];
-        model_tank.Materials[m].tex.Load(const_cast<char*>(path));
+        model_tank.Materials[m].tex.texture[0] = tex_tank4;
+        model_tank.Materials[m].tex.texturename = (char*)"tank4"; // non-null name
         model_tank.Materials[m].textured = true;
         model_tank.Materials[m].tex.Use();
     }
@@ -1533,37 +1532,6 @@ void Level1::renderPort() {
     glRotatef(180.0f, 0, 1, 0);
     glScalef(3.0f, 3.0f, 3.0f);  // Increased from 2.0f
     model_tents.Draw();
-    glPopMatrix();
-    
-    // Render tanks on the port
-    glEnable(GL_TEXTURE_2D);
-    glEnable(GL_LIGHTING);
-    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-    // Tank 1
-    glPushMatrix();
-    glColor3f(1.0f, 1.0f, 1.0f);
-    glTranslatef(portX + 250.0f, portHeight + 0.1f, -500.0f);
-    glRotatef(45.0f, 0, 1, 0);
-    glScalef(0.08f, 0.08f, 0.08f);
-    model_tank.Draw();
-    glPopMatrix();
-    
-    // Tank 2
-    glPushMatrix();
-    glColor3f(1.0f, 1.0f, 1.0f);
-    glTranslatef(portX + 250.0f, portHeight + 0.1f, 0.0f);
-    glRotatef(-30.0f, 0, 1, 0);
-    glScalef(0.08f, 0.08f, 0.08f);
-    model_tank.Draw();
-    glPopMatrix();
-    
-    // Tank 3
-    glPushMatrix();
-    glColor3f(1.0f, 1.0f, 1.0f);
-    glTranslatef(portX + 250.0f, portHeight + 0.1f, 500.0f);
-    glRotatef(90.0f, 0, 1, 0);
-    glScalef(0.08f, 0.08f, 0.08f);
-    model_tank.Draw();
     glPopMatrix();
     
     // Render trucks on the port
