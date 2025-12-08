@@ -152,7 +152,7 @@ int main(int argc, char** argv)
 	glutInit(&argc, argv);
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
 	glutInitWindowSize(WIDTH, HEIGHT);
-	glutInitWindowPosition(100, 150);
+	glutInitWindowPosition(100, 100);
 	glutCreateWindow(title);
 
 	glutDisplayFunc(myDisplay);
@@ -171,13 +171,13 @@ int main(int argc, char** argv)
     Level1* carrierLevel = new Level1();
     Level2* flightLevel = new Level2();
     
-    GameManager::getInstance().registerLevel("CarrierMission", carrierLevel);
-    GameManager::getInstance().registerLevel("FlightSimulator", flightLevel);
+    GameManager::getInstance().registerLevel("Level1", carrierLevel);
+    GameManager::getInstance().registerLevel("Level2", flightLevel);
     
     // Initialize and switch to Level 1 (Carrier Mission)
     carrierLevel->init();
     flightLevel->init();
-    GameManager::getInstance().switchToLevel("FlightSimulator");
+    GameManager::getInstance().switchToLevel("Level1");
     
     lastTime = glutGet(GLUT_ELAPSED_TIME);
 

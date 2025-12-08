@@ -118,8 +118,8 @@ Level1::Level1() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(
     waterLevel(-2.0f), portHeight(3.0f),
     spawnProtectionTimer(3.0f), hasSpawnProtection(true) {
     
-    // Aircraft carrier positioned in water - raised up
-    carrierPosition = Vector3f(0.0f, 50.0f, -100.0f);  // Raised above water
+    // Aircraft carrier positioned in water at surface level
+    carrierPosition = Vector3f(0.0f, waterLevel + 2.0f, -100.0f);  // At water surface
     carrierRotation = 0.0f;
     carrierScale = 0.001f;  // Appropriate scale
 }
@@ -131,19 +131,19 @@ Level1::~Level1() {
 void Level1::init() {
     flightSim = new FlightController();
     
-    // Start plane in the air, above and ahead of the carrier - ready to fly
-    // Must set AFTER constructor since reset() is called in constructor
-    flightSim->player.position = Vector3f(0.0f, 60.0f, 80.0f);  // Much higher altitude, further forward
-    flightSim->player.velocity = Vector3f(0, 5.0f, 50.0f);  // Strong forward + slight upward velocity
-    flightSim->player.forward = Vector3f(0, 0.1f, 1).unit();  // Slightly pitched up
+    // Start plane on the carrier deck - stationary, ready for takeoff
+    // Position plane at the back of the carrier deck
+    flightSim->player.position = Vector3f(carrierPosition.x, carrierPosition.y + 3.0f, carrierPosition.z - 25.0f);
+    flightSim->player.velocity = Vector3f(0, 0, 0);  // Stationary
+    flightSim->player.forward = Vector3f(0, 0, 1);  // Facing forward along carrier
     flightSim->player.up = Vector3f(0, 1, 0);
     flightSim->player.right = Vector3f(1, 0, 0);
-    flightSim->player.throttle = 0.7f;  // Higher throttle to maintain speed
-    flightSim->isGrounded = false;  // Start in flight
+    flightSim->player.throttle = 0.0f;  // Engine off
+    flightSim->isGrounded = true;  // Start on ground
     flightSim->isCrashed = false;
     
     // Spawn protection - cannot crash for first 3 seconds
-    spawnProtectionTimer = 3.0f;
+    spawnProtectionTimer = 5.0f;
     hasSpawnProtection = true;
     
     loadAssets();
@@ -212,29 +212,28 @@ void Level1::loadAssets() {
 void Level1::initRings() {
     rings.clear();
     ringsPassedCount = 0;
+
     
-    // Create a series of rings forming a path in the sky
-    // Starting from carrier, going up and around
     float startX = 0.0f;
-    float startY = 30.0f;
-    float startZ = 50.0f;
-    
+    float startY = 70.0f;  
+    float startZ = 200.0f;  
+
+    float spacingZ = 300.0f;  
+    float heightIncrement = 10.0f;  
+
     for (int i = 0; i < totalRings; i++) {
         Ring ring;
-        
-        // Create a winding path through the sky
-        float t = (float)i / (float)(totalRings - 1);
-        float angle = t * 3.14159f * 2.0f;  // Full circle path
-        
-        ring.position.x = startX + sin(angle) * 150.0f + (rand() % 50 - 25);
-        ring.position.y = startY + t * 80.0f + sin(t * 6.28f) * 20.0f;  // Gradually higher
-        ring.position.z = startZ + i * 80.0f + cos(angle) * 100.0f;
-        
+
+        // Straight line along Z axis
+        ring.position.x = startX;
+        ring.position.y = startY + (i * heightIncrement);  // Gradually increase height
+        ring.position.z = startZ + (i * spacingZ);  // Space rings evenly along Z
+
         ring.radius = 15.0f + (rand() % 10);  // Ring radius 15-25
         ring.passed = false;
         ring.isGolden = (i == totalRings - 1);  // Last ring is golden
         ring.rotationAngle = (float)(rand() % 360);
-        
+
         rings.push_back(ring);
     }
 }
@@ -276,7 +275,7 @@ void Level1::update(float deltaTime) {
         levelCompleteTimer += deltaTime;
         if (levelCompleteTimer > 3.0f) {
             // Transition to Level 2
-            GameManager::getInstance().switchToLevel("FlightSimulator");
+            GameManager::getInstance().switchToLevel("Level2");
         }
         return;
     }
@@ -292,10 +291,13 @@ void Level1::update(float deltaTime) {
         if (flightSim->isCrashed) {
             flightSim->isCrashed = false;
         }
-        // Also keep plane above water during spawn protection
-        if (flightSim->player.position.y < 10.0f) {
-            flightSim->player.position.y = 10.0f;
-            flightSim->player.velocity.y = 0.0f;
+        // Keep plane on carrier deck during spawn protection
+        if (isOnCarrierDeck(flightSim->player.position)) {
+            float deckY = carrierPosition.y + 3.0f;
+            if (flightSim->player.position.y < deckY) {
+                flightSim->player.position.y = deckY;
+                flightSim->player.velocity.y = 0.0f;
+            }
         }
     }
     
@@ -321,7 +323,54 @@ void Level1::update(float deltaTime) {
         
         bool wasCrashedBefore = flightSim->isCrashed;
         
+        // Store old position for carrier deck collision
+        Vector3f oldPos = flightSim->player.position;
+        
         flightSim->update(deltaTime);
+        
+        // Carrier deck collision detection - check if plane is on carrier
+        if (isOnCarrierDeck(flightSim->player.position)) {
+            float deckY = carrierPosition.y + 3.0f;  // Deck height
+            
+            // If plane is at or below deck level
+            if (flightSim->player.position.y <= deckY + 0.5f) {
+                flightSim->player.position.y = deckY + 0.5f;  // Place on deck
+                
+                // Check if landing or already on deck
+                if (!flightSim->isGrounded) {
+                    float verticalSpeed = flightSim->player.velocity.y;
+                    float speed = flightSim->getSpeed();
+                    
+                    // Hard crash: Falling too fast or hitting deck nose first
+                    if (verticalSpeed < -10.0f || (speed > 40.0f && flightSim->player.forward.y < -0.2f)) {
+                        if (!hasSpawnProtection) {
+                            flightSim->isCrashed = true;
+                            flightSim->player.throttle = 0;
+                        }
+                    } else {
+                        // Successful landing on carrier
+                        flightSim->isGrounded = true;
+                        flightSim->player.velocity.y = 0;
+                        
+                        // Flatten out pitch slightly on landing
+                        if (flightSim->player.forward.y < 0) {
+                            flightSim->player.forward.y = 0;
+                            flightSim->player.forward = flightSim->player.forward.unit();
+                        }
+                    }
+                } else {
+                    // Already on carrier deck
+                    flightSim->player.velocity.y = 0;  // Cancel gravity
+                    
+                    // Allow takeoff from carrier
+                    float speed = flightSim->getSpeed();
+                    if (speed > 50.0f && flightSim->player.forward.y > 0.1f) {  // TAKEOFF_SPEED = 50.0f
+                        flightSim->isGrounded = false;  // Liftoff!
+                        flightSim->player.position.y += 0.1f;  // Unstick from deck
+                    }
+                }
+            }
+        }
         
         // During spawn protection, prevent any crash from sticking
         if (hasSpawnProtection && flightSim->isCrashed) {
@@ -445,26 +494,51 @@ void Level1::spawnRocket() {
 
 void Level1::checkRingPassage() {
     if (!flightSim) return;
-    
+
     Vector3f planePos = flightSim->player.position;
+
+    // Find the next ring that needs to be passed (first unpassed ring in order)
+    int nextRingIndex = -1;
+    for (int i = 0; i < (int)rings.size(); i++) {
+        if (!rings[i].passed) {
+            nextRingIndex = i;
+            break;
+        }
+    }
     
-    for (auto& ring : rings) {
-        if (ring.passed) continue;
-        
-        // Check if plane passed through ring
-        float dx = planePos.x - ring.position.x;
-        float dy = planePos.y - ring.position.y;
-        float dz = planePos.z - ring.position.z;
-        float distSq = dx * dx + dy * dy + dz * dz;
-        
-        // Must be close enough and within ring radius
-        if (distSq < ring.radius * ring.radius * 2.0f) {
-            // Check if within ring plane (simple check)
-            float distFromCenter = sqrt(dx * dx + dy * dy);
-            if (distFromCenter < ring.radius) {
-                ring.passed = true;
-                ringsPassedCount++;
-                score += ring.isGolden ? 500 : 100;
+    // If all rings are passed, we're done
+    if (nextRingIndex == -1) return;
+    
+    // Only check collision with the next ring in sequence
+    Ring& ring = rings[nextRingIndex];
+    
+    // Check if plane passed through ring
+    float dx = planePos.x - ring.position.x;
+    float dy = planePos.y - ring.position.y;
+    float dz = planePos.z - ring.position.z;
+    float distSq = dx * dx + dy * dy + dz * dz;
+
+    // Must be close enough and within ring radius
+    if (distSq < ring.radius * ring.radius * 2.0f) {
+        // Check if within ring plane (simple check)
+        float distFromCenter = sqrt(dx * dx + dy * dy);
+        if (distFromCenter < ring.radius) {
+            ring.passed = true;
+            ringsPassedCount++;
+
+            // Check if this is the golden ring and all other rings are passed
+            if (ring.isGolden && ringsPassedCount >= totalRings) {
+                // All rings passed including golden ring - switch to Level 2
+                score += 500;  // Golden ring bonus
+                score += (int)(gameTimer * 10);  // Time bonus
+                soundSystem.playCoinSound();
+
+                // Trigger level switch immediately to Level 2
+                levelComplete = true;
+                return;
+            }
+            else {
+                score += 100;
                 soundSystem.playCoinSound();
             }
         }
@@ -618,17 +692,18 @@ void Level1::renderPortLights() {
 }
 
 bool Level1::isOnCarrierDeck(const Vector3f& pos) {
-    // Carrier deck bounds (adjusted for new scale and position)
-    // With scale 0.015, the carrier is much smaller
-    float deckMinX = carrierPosition.x - 5.0f;
-    float deckMaxX = carrierPosition.x + 5.0f;
-    float deckMinZ = carrierPosition.z - 30.0f;
-    float deckMaxZ = carrierPosition.z + 30.0f;
-    float deckY = carrierPosition.y + 2.0f;  // Deck height
+    // Carrier deck bounds (adjusted for scale 0.001)
+    // The carrier model at scale 0.001 is much larger than before
+    // Typical carrier deck dimensions after scaling
+    float deckMinX = carrierPosition.x - 25.0f;  // Wider deck
+    float deckMaxX = carrierPosition.x + 25.0f;
+    float deckMinZ = carrierPosition.z - 40.0f;  // Longer deck for takeoff
+    float deckMaxZ = carrierPosition.z + 40.0f;
+    float deckY = carrierPosition.y + 3.0f;  // Deck height above carrier base
     
     return (pos.x >= deckMinX && pos.x <= deckMaxX &&
             pos.z >= deckMinZ && pos.z <= deckMaxZ &&
-            pos.y <= deckY + 2.0f && pos.y >= deckY - 1.0f);
+            pos.y <= deckY + 3.0f && pos.y >= deckY - 1.0f);
 }
 
 void Level1::render() {
@@ -741,7 +816,7 @@ void Level1::renderWater() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
-    float size = 2000.0f;
+    float size = 6000.0f;
     float texScale = 0.003f;
     
     // Animated texture offset - slides the water texture
@@ -888,16 +963,41 @@ void Level1::renderRing(const Ring& ring) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
+    // Find the next ring that needs to be passed (first unpassed ring in order)
+    int nextRingIndex = -1;
+    for (int i = 0; i < (int)rings.size(); i++) {
+        if (!rings[i].passed) {
+            nextRingIndex = i;
+            break;
+        }
+    }
+    
+    // Determine if this is the next ring to pass through
+    bool isNextRing = false;
+    if (nextRingIndex != -1) {
+        // Check if this ring matches the next ring position (by comparing position)
+        const Ring& nextRing = rings[nextRingIndex];
+        if (ring.position.x == nextRing.position.x && 
+            ring.position.y == nextRing.position.y && 
+            ring.position.z == nextRing.position.z) {
+            isNextRing = true;
+        }
+    }
+    
     // Ring color
     if (ring.passed) {
         glColor4f(0.3f, 0.3f, 0.3f, 0.5f);  // Dim gray for passed rings
-    } else if (ring.isGolden) {
-        // Golden ring - pulsing glow
+    } else if (ring.isGolden && isNextRing) {
+        // Golden ring when it's the next one to pass - pulsing glow
         float pulse = 0.7f + 0.3f * sin(ringTimer * 3.0f);
         glColor4f(1.0f * pulse, 0.84f * pulse, 0.0f, 0.9f);
+    } else if (isNextRing) {
+        // Next ring to pass - bright blue
+        float pulse = 0.8f + 0.2f * sin(ringTimer * 4.0f);
+        glColor4f(0.0f, 0.6f * pulse, 1.0f * pulse, 0.9f);
     } else {
-        // Regular ring - cyan/blue
-        glColor4f(0.0f, 0.8f, 1.0f, 0.8f);
+        // Other unpassed rings - grey
+        glColor4f(0.5f, 0.5f, 0.5f, 0.6f);
     }
     
     // Draw ring using torus
@@ -926,14 +1026,13 @@ void Level1::renderRing(const Ring& ring) {
         glEnd();
     }
     
-    // Inner glow for unpassed rings
-    if (!ring.passed) {
+    // Inner glow for next ring to pass
+    if (!ring.passed && isNextRing) {
         if (ring.isGolden) {
             glColor4f(1.0f, 0.9f, 0.3f, 0.3f);
-        } else {
-            glColor4f(0.0f, 0.5f, 1.0f, 0.2f);
-        }
-        glutSolidSphere(ring.radius * 0.8f, 16, 16);
+            glutSolidSphere(ring.radius * 0.8f, 16, 16);
+        } 
+        
     }
     
     glDisable(GL_BLEND);
@@ -1153,6 +1252,220 @@ void Level1::renderHUD() {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
     }
     
+    // Draw Speed indicator (bottom left)
+    if (flightSim) {
+        float speed = flightSim->getSpeed();
+        
+        // Background box
+        glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
+        glBegin(GL_QUADS);
+        glVertex2f(10, 60);
+        glVertex2f(180, 60);
+        glVertex2f(180, 10);
+        glVertex2f(10, 10);
+        glEnd();
+        
+        // Speed color changes based on value
+        if (speed < 30.0f) {
+            glColor3f(1.0f, 0.3f, 0.3f);  // Red (slow/stalling)
+        } else if (speed < 50.0f) {
+            glColor3f(1.0f, 1.0f, 0.0f);  // Yellow (takeoff speed)
+        } else if (speed < 80.0f) {
+            glColor3f(0.0f, 1.0f, 0.0f);  // Green (good speed)
+        } else {
+            glColor3f(0.0f, 0.8f, 1.0f);  // Cyan (high speed)
+        }
+        
+        sprintf_s(buffer, sizeof(buffer), "Speed: %.0f", speed);
+        glRasterPos2f(20, 35);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+        }
+        
+        // Draw speed bar
+        float speedBarWidth = 150.0f;
+        float speedBarFill = (speed / 120.0f) * speedBarWidth;  // Max speed 120 for display
+        if (speedBarFill > speedBarWidth) speedBarFill = speedBarWidth;
+        
+        // Speed bar background
+        glColor4f(0.3f, 0.3f, 0.3f, 0.8f);
+        glBegin(GL_QUADS);
+        glVertex2f(15, 28);
+        glVertex2f(15 + speedBarWidth, 28);
+        glVertex2f(15 + speedBarWidth, 22);
+        glVertex2f(15, 22);
+        glEnd();
+        
+        // Speed bar fill (same color as text)
+        if (speed < 30.0f) {
+            glColor4f(1.0f, 0.3f, 0.3f, 0.9f);
+        } else if (speed < 50.0f) {
+            glColor4f(1.0f, 1.0f, 0.0f, 0.9f);
+        } else if (speed < 80.0f) {
+            glColor4f(0.0f, 1.0f, 0.0f, 0.9f);
+        } else {
+            glColor4f(0.0f, 0.8f, 1.0f, 0.9f);
+        }
+        
+        glBegin(GL_QUADS);
+        glVertex2f(15, 28);
+        glVertex2f(15 + speedBarFill, 28);
+        glVertex2f(15 + speedBarFill, 22);
+        glVertex2f(15, 22);
+        glEnd();
+        
+        // Draw takeoff speed marker (50.0 units)
+        float takeoffMarkerX = 15 + (50.0f / 120.0f) * speedBarWidth;
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glBegin(GL_LINES);
+        glVertex2f(takeoffMarkerX, 28);
+        glVertex2f(takeoffMarkerX, 19);
+        glEnd();
+    }
+    
+    // Draw Attitude Indicator (Pitch, Roll, Yaw) - Bottom Right
+    if (flightSim) {
+        float centerX = screenWidth - 120.0f;
+        float centerY = 120.0f;
+        float radius = 80.0f;
+        
+        // Background box
+        glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
+        glBegin(GL_QUADS);
+        glVertex2f(screenWidth - 230, 220);
+        glVertex2f(screenWidth - 10, 220);
+        glVertex2f(screenWidth - 10, 20);
+        glVertex2f(screenWidth - 230, 20);
+        glEnd();
+        
+        // Calculate pitch, roll, yaw from plane's orientation vectors
+        Vector3f forward = flightSim->player.forward;
+        Vector3f up = flightSim->player.up;
+        Vector3f right = flightSim->player.right;
+        
+        // Pitch: angle between forward vector and horizontal plane (in degrees)
+        float pitch = asin(forward.y) * 180.0f / 3.14159f;
+        
+        // Roll: angle of tilt left/right (in degrees)
+        float roll = atan2(right.y, up.y) * 180.0f / 3.14159f;
+        
+        // Yaw: compass heading (in degrees) - angle in XZ plane
+        float yaw = atan2(forward.x, forward.z) * 180.0f / 3.14159f;
+        if (yaw < 0) yaw += 360.0f;
+        
+        // Draw artificial horizon (Roll and Pitch indicator)
+        glPushMatrix();
+        glTranslatef(centerX, centerY, 0);
+        
+        // Draw sky/ground horizon
+        glRotatef(-roll, 0, 0, 1);  // Rotate by roll angle
+        
+        // Sky (upper half)
+        glColor4f(0.3f, 0.5f, 0.8f, 0.7f);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(0, 0);
+        for (int i = 0; i <= 180; i += 10) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(cos(angle) * radius, sin(angle) * radius + pitch * 1.5f);
+        }
+        glEnd();
+        
+        // Ground (lower half)
+        glColor4f(0.4f, 0.3f, 0.2f, 0.7f);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(0, 0);
+        for (int i = 180; i <= 360; i += 10) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(cos(angle) * radius, sin(angle) * radius + pitch * 1.5f);
+        }
+        glEnd();
+        
+        // Horizon line
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glLineWidth(2.0f);
+        glBegin(GL_LINES);
+        glVertex2f(-radius, pitch * 1.5f);
+        glVertex2f(radius, pitch * 1.5f);
+        glEnd();
+        glLineWidth(1.0f);
+        
+        // Pitch ladder marks (every 10 degrees)
+        glColor3f(1.0f, 1.0f, 1.0f);
+        for (int p = -30; p <= 30; p += 10) {
+            if (p == 0) continue;  // Skip zero (horizon)
+            float yOffset = (pitch - p) * 1.5f;
+            if (fabs(yOffset) < radius) {
+                glBegin(GL_LINES);
+                glVertex2f(-20, yOffset);
+                glVertex2f(20, yOffset);
+                glEnd();
+            }
+        }
+        
+        glPopMatrix();
+        
+        // Center reference mark (fixed airplane symbol)
+        glColor3f(1.0f, 1.0f, 0.0f);
+        glLineWidth(3.0f);
+        glBegin(GL_LINES);
+        // Left wing
+        glVertex2f(centerX - 40, centerY);
+        glVertex2f(centerX - 10, centerY);
+        // Right wing
+        glVertex2f(centerX + 10, centerY);
+        glVertex2f(centerX + 40, centerY);
+        // Center dot
+        glVertex2f(centerX - 2, centerY);
+        glVertex2f(centerX + 2, centerY);
+        glEnd();
+        glLineWidth(1.0f);
+        
+        // Outer circle border
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 360; i += 5) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(centerX + cos(angle) * radius, centerY + sin(angle) * radius);
+        }
+        glEnd();
+        
+        // Roll indicator triangle at top
+        glPushMatrix();
+        glTranslatef(centerX, centerY, 0);
+        glRotatef(-roll, 0, 0, 1);
+        glColor3f(1.0f, 0.0f, 0.0f);
+        glBegin(GL_TRIANGLES);
+        glVertex2f(0, radius + 5);
+        glVertex2f(-5, radius - 5);
+        glVertex2f(5, radius - 5);
+        glEnd();
+        glPopMatrix();
+        
+        // Display numerical values
+        glColor3f(1.0f, 1.0f, 1.0f);
+        
+        // Pitch value
+        sprintf_s(buffer, sizeof(buffer), "Pitch: %.0f", pitch);
+        glRasterPos2f(screenWidth - 220, 200);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+        
+        // Roll value
+        sprintf_s(buffer, sizeof(buffer), "Roll: %.0f", roll);
+        glRasterPos2f(screenWidth - 220, 185);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+        
+        // Yaw (heading) value
+        sprintf_s(buffer, sizeof(buffer), "Heading: %.0f", yaw);
+        glRasterPos2f(screenWidth - 220, 30);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+    }
+    
     // Draw altitude warning if flying too high
     if (flightSim && flightSim->player.position.y > 150.0f) {
         glColor4f(1.0f, 0.0f, 0.0f, 0.7f + 0.3f * sin(ringTimer * 5.0f));
@@ -1334,17 +1647,21 @@ void Level1::handleKeyboard(unsigned char key, bool pressed) {
         initRockets();
         shootingSystem.reset();  // Reset shooting system
         
-        // Reset plane - start in the air
+        // Reset plane - start on carrier deck, stationary
         if (flightSim) {
-            flightSim->player.position = Vector3f(0.0f, 40.0f, 50.0f);
-            flightSim->player.velocity = Vector3f(0, 0, 30.0f);
-            flightSim->player.forward = Vector3f(0, 0, 1);
+            flightSim->player.position = Vector3f(carrierPosition.x, carrierPosition.y + 3.0f, carrierPosition.z - 25.0f);
+            flightSim->player.velocity = Vector3f(0, 0, 0);  // Stationary
+            flightSim->player.forward = Vector3f(0, 0, 1);  // Facing forward along carrier
             flightSim->player.up = Vector3f(0, 1, 0);
             flightSim->player.right = Vector3f(1, 0, 0);
-            flightSim->player.throttle = 0.5f;
-            flightSim->isGrounded = false;
+            flightSim->player.throttle = 0.0f;  // Engine off
+            flightSim->isGrounded = true;  // Start on deck
             flightSim->isCrashed = false;
         }
+        
+        // Reset spawn protection
+        spawnProtectionTimer = 3.0f;
+        hasSpawnProtection = true;
     }
     
     // Shooting - Space key to fire
