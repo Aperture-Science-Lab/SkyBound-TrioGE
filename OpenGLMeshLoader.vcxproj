@@ -87,9 +87,11 @@
     <ClCompile Include="CrashSystem.cpp" />
     <ClCompile Include="GameManager.cpp" />
     <ClCompile Include="GLTexture.cpp" />
+    <ClCompile Include="HUDRenderer.cpp" />
     <ClCompile Include="Level.cpp" />
     <ClCompile Include="Level1.cpp" />
     <ClCompile Include="Level2.cpp" />
+    <ClCompile Include="PlaneSelectionLevel.cpp" />
     <ClCompile Include="Model_3DS.cpp" />
     <ClCompile Include="OpenGLMeshLoader.cpp" />
     <ClCompile Include="FlightController.cpp" />
@@ -105,9 +107,11 @@
     <ClInclude Include="CrashSystem.h" />
     <ClInclude Include="GameManager.h" />
     <ClInclude Include="GLTexture.h" />
+    <ClInclude Include="HUDRenderer.h" />
     <ClInclude Include="Level.h" />
     <ClInclude Include="Level1.h" />
     <ClInclude Include="Level2.h" />
+    <ClInclude Include="PlaneSelectionLevel.h" />
     <ClInclude Include="Model_3DS.h" />
     <ClInclude Include="FlightController.h" />
     <ClInclude Include="ParticleEffects.h" />

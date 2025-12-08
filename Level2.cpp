@@ -1,12 +1,15 @@
 #include "Level2.h"
+#include "PlaneSelectionLevel.h"
 #include <glut.h>
 #include <cmath>
 #include <stdio.h>
+#include <cstring>
+#include "HUDRenderer.h"
 
 extern void loadBMP(unsigned int* textureID, char* strFileName, int wrap);
 
-// Custom BMP loader that handles both 8-bit paletted and 24-bit BMPs
-static bool loadGroundTexture(GLuint* texID, const char* filename) {
+// Custom BMP loader that handles 8/16/24/32-bit BMPs (with V4/V5 headers)
+static bool loadGroundTexture(GLuint* texID, const char* filename, bool useAlpha = false) {
     FILE* file = NULL;
     fopen_s(&file, filename, "rb");
     if (!file) {
@@ -79,6 +82,38 @@ static bool loadGroundTexture(GLuint* texID, const char* filename) {
         }
         delete[] indexData;
     }
+    else if (bitsPerPixel == 16) {
+        // 16-bit 565/555 BMP
+        fseek(file, dataOffset, SEEK_SET);
+        int rowSize = ((width * 2 + 3) / 4) * 4;
+        unsigned char* bmpData = new unsigned char[rowSize * height];
+        if (fread(bmpData, 1, rowSize * height, file) != (size_t)(rowSize * height)) {
+            delete[] bmpData;
+            delete[] rgbData;
+            fclose(file);
+            return false;
+        }
+        for (int y = 0; y < height; y++) {
+            int srcY = topDown ? y : (height - 1 - y);
+            for (int x = 0; x < width; x++) {
+                int srcIdx = srcY * rowSize + x * 2;
+                unsigned short pix = bmpData[srcIdx] | (bmpData[srcIdx + 1] << 8);
+                // Assume 565; fallback to 555 by masking
+                unsigned char r = (unsigned char)((pix >> 11) & 0x1F);
+                unsigned char g = (unsigned char)((pix >> 5)  & 0x3F);
+                unsigned char b = (unsigned char)(pix & 0x1F);
+                // Expand to 8-bit per channel
+                r = (r << 3) | (r >> 2);
+                g = (g << 2) | (g >> 4);
+                b = (b << 3) | (b >> 2);
+                int destIdx = (y * width + x) * 3;
+                rgbData[destIdx + 0] = r;
+                rgbData[destIdx + 1] = g;
+                rgbData[destIdx + 2] = b;
+            }
+        }
+        delete[] bmpData;
+    }
     else if (bitsPerPixel == 24) {
         // 24-bit RGB BMP
         fseek(file, dataOffset, SEEK_SET);
@@ -105,6 +140,52 @@ static bool loadGroundTexture(GLuint* texID, const char* filename) {
             }
         }
         delete[] bmpData;
+    }
+    else if (bitsPerPixel == 32) {
+        // 32-bit ARGB/BGRA BMP
+        delete[] rgbData;  // We need RGBA instead
+        unsigned char* rgbaData = new unsigned char[width * height * 4];
+        
+        fseek(file, dataOffset, SEEK_SET);
+        int rowSize = width * 4;
+        unsigned char* bmpData = new unsigned char[rowSize * height];
+        
+        if (fread(bmpData, 1, rowSize * height, file) != (size_t)(rowSize * height)) {
+            delete[] bmpData;
+            delete[] rgbaData;
+            fclose(file);
+            return false;
+        }
+        
+        // Convert BGRA to RGBA
+        for (int y = 0; y < height; y++) {
+            int srcY = topDown ? y : (height - 1 - y);
+            for (int x = 0; x < width; x++) {
+                int srcIdx = srcY * rowSize + x * 4;
+                int destIdx = (y * width + x) * 4;
+                rgbaData[destIdx + 0] = bmpData[srcIdx + 2];  // R
+                rgbaData[destIdx + 1] = bmpData[srcIdx + 1];  // G
+                rgbaData[destIdx + 2] = bmpData[srcIdx + 0];  // B
+                // If useAlpha is false, force alpha to 255 (opaque)
+                // This fixes issues with 32-bit textures that have 0 alpha (XRGB)
+                rgbaData[destIdx + 3] = useAlpha ? bmpData[srcIdx + 3] : 255;
+            }
+        }
+        delete[] bmpData;
+        
+        fclose(file);
+        
+        // Create OpenGL texture with alpha
+        glGenTextures(1, texID);
+        glBindTexture(GL_TEXTURE_2D, *texID);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        gluBuild2DMipmaps(GL_TEXTURE_2D, GL_RGBA, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgbaData);
+        
+        delete[] rgbaData;
+        return true;
     }
     else {
         // Unsupported format
@@ -149,6 +230,17 @@ Level2::~Level2() {
 
 void Level2::init() {
     flightSim = new FlightController();
+    
+    // Load the selected plane model and texture
+    int selectedPlane = PlaneSelectionLevel::getSelectedPlane();
+    if (selectedPlane == 1) {
+        // Load plane 2
+        flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
+    } else {
+        // Load plane 1 (default)
+        flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
+    }
+    
     loadAssets();
     particleEffects.init();   // Initialize particle effects system (wind)
     crashSystem.init();       // Initialize unified crash system (explosion + smoke + sound)
@@ -158,6 +250,7 @@ void Level2::init() {
     initFuelContainers();     // Initialize fuel collectables
     initBuildings();          // Initialize building obstacles
     initAirport();            // Initialize airport landing target
+    initTrees();              // Initialize cardboard tree forest
 
     // Initialize game timer and score
     gameTimer = maxGameTime;  // 300 seconds countdown (5 minutes for full day/night cycle)
@@ -179,12 +272,42 @@ void Level2::init() {
 }
 
 void Level2::loadAssets() {
+    // Try multiple relative roots so textures load regardless of working directory
+    auto tryLoad = [&](GLuint* texID, const char* relativePath, bool useAlpha = false) -> bool {
+        const char* prefixes[] = { "", "../", "../../" };
+        char fullPath[260];
+        for (int i = 0; i < 3; ++i) {
+            sprintf_s(fullPath, sizeof(fullPath), "%s%s", prefixes[i], relativePath);
+            if (loadGroundTexture(texID, fullPath, useAlpha)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     model_house.Load("Models/house/house.3DS");
     model_tree.Load("Models/tree/Tree1.3ds");
     model_fuelContainer.Load("Models/fuel container/Container Gas  N250815.3DS");
     
-    // Load fuel container texture
-    loadBMP(&tex_fuelContainer, "models/fuel container/MetalBase0084_M.bmp", 1);
+    // Load fuel container texture using custom loader (handles more BMP formats)
+    // Pass false for useAlpha to ensure opaque rendering even if 32-bit
+    if (!tryLoad(&tex_fuelContainer, "models/fuel container/MetalBase0084_M.bmp", false)) {
+        // Fallback to metallic gray texture if loading fails
+        glGenTextures(1, &tex_fuelContainer);
+        glBindTexture(GL_TEXTURE_2D, tex_fuelContainer);
+        unsigned char metal[3] = { 120, 120, 130 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, metal);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+
+    // Force the 3DS material to use the loaded fuel texture (some 3DS files omit map names)
+    if (tex_fuelContainer != 0) {
+        for (int m = 0; m < model_fuelContainer.numMaterials; ++m) {
+            model_fuelContainer.Materials[m].tex.texture[0] = tex_fuelContainer;
+            model_fuelContainer.Materials[m].textured = true;
+        }
+    }
     
     // Create simple green grass texture (procedural)
     glGenTextures(1, &tex_grass);
@@ -222,31 +345,50 @@ void Level2::loadAssets() {
     model_buildings[9].Load("Models/buildings/Residential Buildings 010.3ds");
     
     // Load runway texture
-    if (!loadGroundTexture(&tex_runway, "textures/runway.bmp")) {
-        if (!loadGroundTexture(&tex_runway, "../textures/runway.bmp")) {
-            // Create a dark gray fallback texture for runway
-            glGenTextures(1, &tex_runway);
-            glBindTexture(GL_TEXTURE_2D, tex_runway);
-            unsigned char gray[3] = { 60, 60, 65 };
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, gray);
+    // Pass false for useAlpha to ensure opaque rendering
+    if (!tryLoad(&tex_runway, "textures/runway.bmp", false)) {
+        // Create a dark gray fallback texture for runway
+        glGenTextures(1, &tex_runway);
+        glBindTexture(GL_TEXTURE_2D, tex_runway);
+        unsigned char gray[3] = { 60, 60, 65 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, gray);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    
+    // Load airport terminal model and texture
+    model_airportTerminal.Load("Models/airport terminal/3d-model.3ds");
+    if (!tryLoad(&tex_airportTerminal, "models/airport terminal/AussenWand_C.bmp", false)) {
+        tryLoad(&tex_airportTerminal, "Models/airport terminal/AussenWand_C.bmp", false);
+    }
+    
+    // Load tree textures (32-bit ARGB with transparency)
+    for (int i = 0; i < 3; i++) {
+        char filename[64];
+        sprintf_s(filename, sizeof(filename), "textures/Tree%s.bmp", i == 0 ? "" : (i == 1 ? "2" : "3"));
+        
+        // Pass true for useAlpha because trees need transparency
+        if (!tryLoad(&tex_tree[i], filename, true)) {
+            // Fallback: create a simple green texture
+            glGenTextures(1, &tex_tree[i]);
+            glBindTexture(GL_TEXTURE_2D, tex_tree[i]);
+            unsigned char green[4] = { 40, 120, 30, 255 };
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, green);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         }
     }
     
-    // Load airport terminal model and texture
-    model_airportTerminal.Load("Models/airport terminal/3d-model.3ds");
-    if (!loadGroundTexture(&tex_airportTerminal, "Models/airport terminal/AussenWand_C.bmp")) {
-        loadGroundTexture(&tex_airportTerminal, "../Models/airport terminal/AussenWand_C.bmp");
-    }
-    
-    // Try to load ground texture using custom loader
-    if (!loadGroundTexture(&tex_ground.texture[0], "../textures/grassGround.bmp")) {
-        // Fallback: try without ../ in case working dir is project root
-        if (!loadGroundTexture(&tex_ground.texture[0], "textures/grassGround.bmp")) {
-            // Last resort: create a green fallback texture
-            tex_ground.BuildColorTexture(60, 120, 60);
-        }
+    // Load ground texture using custom loader
+    // Pass false for useAlpha to ensure opaque rendering
+    if (!tryLoad(&tex_ground, "textures/grassGround.bmp", false)) {
+        // Fallback to green if texture failed to load
+        glGenTextures(1, &tex_ground);
+        glBindTexture(GL_TEXTURE_2D, tex_ground);
+        unsigned char green[3] = { 50, 150, 50 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, green);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
     
     skySystem.init();  // Initialize sky and lens flare system
@@ -332,7 +474,10 @@ void Level2::update(float deltaTime) {
 void Level2::render() {
     if (!active) return;
     
+    glClearColor(0.35f, 0.45f, 0.65f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_LIGHTING);
     
     if (flightSim) {
         glMatrixMode(GL_PROJECTION);
@@ -396,6 +541,9 @@ void Level2::render() {
     // Render Fuel Containers
     renderFuelContainers();
     
+    // Render Cardboard Trees
+    renderTrees();
+    
     // Render Buildings
     renderBuildings();
     
@@ -449,12 +597,14 @@ void Level2::render() {
     if (showGameOver && !flightSim->isCrashed) {
         renderGameOverScreen();
     }
-    
-    glutSwapBuffers();
 }
 
 void Level2::renderGround() {
     glDisable(GL_LIGHTING);
+
+    // Track previous cull state so we can restore it
+    GLboolean wasCullEnabled = glIsEnabled(GL_CULL_FACE);
+    glDisable(GL_CULL_FACE);  // Draw both sides to avoid upside-down black view
     
     float px = 0, pz = 0;
     if (flightSim) {
@@ -473,8 +623,8 @@ void Level2::renderGround() {
     glDisable(GL_BLEND);
     
     // Check if texture loaded - use green fallback if not
-    if (tex_ground.texture[0] != 0) {
-        glBindTexture(GL_TEXTURE_2D, tex_ground.texture[0]);
+    if (tex_ground != 0) {
+        glBindTexture(GL_TEXTURE_2D, tex_ground);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
@@ -501,6 +651,11 @@ void Level2::renderGround() {
     glEnd();
     
     glPopMatrix();
+    glDisable(GL_TEXTURE_2D);   // Prevent texture bleed into plane rendering
+
+    // Restore previous culling state
+    if (wasCullEnabled) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+
     glEnable(GL_LIGHTING);
     glColor3f(1, 1, 1);
 }
@@ -704,8 +859,17 @@ void Level2::onEnter() {
     // Reinitialize collectables
     initFuelContainers();
 
-    // Reset plane state - START IN THE AIR AND FLYING
+    // Reload plane based on current selection and set flying state
     if (flightSim) {
+        int selectedPlane = PlaneSelectionLevel::getSelectedPlane();
+        printf("Level2 loading plane %d on enter\n", selectedPlane);
+        flightSim->modelLoaded = false;  // allow reload
+        if (selectedPlane == 1) {
+            flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
+        } else {
+            flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
+        }
+        flightSim->isCrashed = false;
         // Set position at altitude
         flightSim->player.position = Vector3f(-800.0f, 80.0f, -800.0f);
 
@@ -871,10 +1035,10 @@ void Level2::checkFuelCollision() {
 }
 
 void Level2::renderHUD() {
-    // Save current matrices and states
+    // Save current state
     glPushAttrib(GL_ALL_ATTRIB_BITS);
     
-    // Switch to orthographic projection for 2D HUD
+    // Switch to 2D orthographic projection
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glLoadIdentity();
@@ -884,14 +1048,15 @@ void Level2::renderHUD() {
     glPushMatrix();
     glLoadIdentity();
     
-    // Disable lighting and depth test for HUD
     glDisable(GL_LIGHTING);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_TEXTURE_2D);
-    
-    // Draw semi-transparent background for fuel
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    char buffer[64];
+    
+    // Draw Fuel Counter (top left)
     glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
     glBegin(GL_QUADS);
     glVertex2f(10, screenHeight - 10);
@@ -900,8 +1065,7 @@ void Level2::renderHUD() {
     glVertex2f(10, screenHeight - 50);
     glEnd();
     
-    // Draw fuel icon (simple rectangle representing canister)
-    glColor4f(0.2f, 0.8f, 0.2f, 1.0f);  // Green color
+    glColor3f(0.2f, 0.8f, 0.2f);
     glBegin(GL_QUADS);
     glVertex2f(20, screenHeight - 20);
     glVertex2f(40, screenHeight - 20);
@@ -909,14 +1073,10 @@ void Level2::renderHUD() {
     glVertex2f(20, screenHeight - 40);
     glEnd();
     
-    // Draw text for collected count
     glColor3f(1.0f, 1.0f, 1.0f);
-    glRasterPos2f(50, screenHeight - 35);
-    
-    char buffer[64];
     int total = (int)fuelContainers.size();
     sprintf_s(buffer, sizeof(buffer), "Fuel: %d / %d", collectedCount, total);
-    
+    glRasterPos2f(50, screenHeight - 35);
     for (char* c = buffer; *c != '\0'; c++) {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
     }
@@ -931,13 +1091,12 @@ void Level2::renderHUD() {
     glVertex2f(timerBoxX, screenHeight - 50);
     glEnd();
     
-    // Timer color changes as time runs low
     if (gameTimer > 30.0f) {
-        glColor3f(1.0f, 1.0f, 1.0f);  // White
+        glColor3f(1.0f, 1.0f, 1.0f);
     } else if (gameTimer > 10.0f) {
-        glColor3f(1.0f, 1.0f, 0.0f);  // Yellow
+        glColor3f(1.0f, 1.0f, 0.0f);
     } else {
-        glColor3f(1.0f, 0.3f, 0.3f);  // Red
+        glColor3f(1.0f, 0.3f, 0.3f);
     }
     
     int minutes = (int)gameTimer / 60;
@@ -957,14 +1116,180 @@ void Level2::renderHUD() {
     glVertex2f(screenWidth - 180, screenHeight - 50);
     glEnd();
     
-    glColor3f(1.0f, 0.9f, 0.2f);  // Gold color
+    glColor3f(1.0f, 0.9f, 0.2f);
     sprintf_s(buffer, sizeof(buffer), "Score: %d", score);
     glRasterPos2f(screenWidth - 170, screenHeight - 35);
     for (char* c = buffer; *c != '\0'; c++) {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
     }
     
-    // Draw altitude warning if flying too high
+    // Draw Speed indicator (bottom left)
+    if (flightSim) {
+        float speed = flightSim->getSpeed();
+        
+        glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
+        glBegin(GL_QUADS);
+        glVertex2f(10, 60);
+        glVertex2f(180, 60);
+        glVertex2f(180, 10);
+        glVertex2f(10, 10);
+        glEnd();
+        
+        if (speed < 30.0f) {
+            glColor3f(1.0f, 0.3f, 0.3f);
+        } else if (speed < 50.0f) {
+            glColor3f(1.0f, 1.0f, 0.0f);
+        } else if (speed < 80.0f) {
+            glColor3f(0.0f, 1.0f, 0.0f);
+        } else {
+            glColor3f(0.0f, 0.8f, 1.0f);
+        }
+        
+        sprintf_s(buffer, sizeof(buffer), "Speed: %.0f", speed);
+        glRasterPos2f(20, 35);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+        }
+        
+        float speedBarWidth = 150.0f;
+        float speedBarFill = (speed / 120.0f) * speedBarWidth;
+        if (speedBarFill > speedBarWidth) speedBarFill = speedBarWidth;
+        
+        glColor4f(0.3f, 0.3f, 0.3f, 0.8f);
+        glBegin(GL_QUADS);
+        glVertex2f(15, 28);
+        glVertex2f(15 + speedBarWidth, 28);
+        glVertex2f(15 + speedBarWidth, 22);
+        glVertex2f(15, 22);
+        glEnd();
+        
+        if (speed < 30.0f) {
+            glColor4f(1.0f, 0.3f, 0.3f, 0.9f);
+        } else if (speed < 50.0f) {
+            glColor4f(1.0f, 1.0f, 0.0f, 0.9f);
+        } else if (speed < 80.0f) {
+            glColor4f(0.0f, 1.0f, 0.0f, 0.9f);
+        } else {
+            glColor4f(0.0f, 0.8f, 1.0f, 0.9f);
+        }
+        
+        glBegin(GL_QUADS);
+        glVertex2f(15, 28);
+        glVertex2f(15 + speedBarFill, 28);
+        glVertex2f(15 + speedBarFill, 22);
+        glVertex2f(15, 22);
+        glEnd();
+    }
+    
+    // Draw Attitude Indicator (bottom right)
+    if (flightSim) {
+        float centerX = screenWidth - 120.0f;
+        float centerY = 120.0f;
+        float radius = 80.0f;
+        
+        glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
+        glBegin(GL_QUADS);
+        glVertex2f(screenWidth - 230, 220);
+        glVertex2f(screenWidth - 10, 220);
+        glVertex2f(screenWidth - 10, 20);
+        glVertex2f(screenWidth - 230, 20);
+        glEnd();
+        
+        Vector3f forward = flightSim->player.forward;
+        Vector3f up = flightSim->player.up;
+        Vector3f right = flightSim->player.right;
+        
+        float pitch = asin(forward.y) * 180.0f / 3.14159f;
+        float roll = atan2(right.y, up.y) * 180.0f / 3.14159f;
+        float yaw = atan2(forward.x, forward.z) * 180.0f / 3.14159f;
+        if (yaw < 0) yaw += 360.0f;
+        
+        glPushMatrix();
+        glTranslatef(centerX, centerY, 0);
+        glRotatef(-roll, 0, 0, 1);
+        
+        glColor4f(0.3f, 0.5f, 0.8f, 0.7f);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(0, 0);
+        for (int i = 0; i <= 180; i += 10) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(cos(angle) * radius, sin(angle) * radius + pitch * 1.5f);
+        }
+        glEnd();
+        
+        glColor4f(0.4f, 0.3f, 0.2f, 0.7f);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(0, 0);
+        for (int i = 180; i <= 360; i += 10) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(cos(angle) * radius, sin(angle) * radius + pitch * 1.5f);
+        }
+        glEnd();
+        
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glLineWidth(2.0f);
+        glBegin(GL_LINES);
+        glVertex2f(-radius, pitch * 1.5f);
+        glVertex2f(radius, pitch * 1.5f);
+        glEnd();
+        glLineWidth(1.0f);
+        
+        for (int p = -30; p <= 30; p += 10) {
+            if (p == 0) continue;
+            float yOffset = (pitch - p) * 1.5f;
+            if (fabs(yOffset) < radius) {
+                glBegin(GL_LINES);
+                glVertex2f(-20, yOffset);
+                glVertex2f(20, yOffset);
+                glEnd();
+            }
+        }
+        
+        glPopMatrix();
+        
+        glColor3f(1.0f, 1.0f, 0.0f);
+        glLineWidth(3.0f);
+        glBegin(GL_LINES);
+        glVertex2f(centerX - 40, centerY);
+        glVertex2f(centerX - 10, centerY);
+        glVertex2f(centerX + 10, centerY);
+        glVertex2f(centerX + 40, centerY);
+        glVertex2f(centerX - 2, centerY);
+        glVertex2f(centerX + 2, centerY);
+        glEnd();
+        glLineWidth(1.0f);
+        
+        glColor3f(0.8f, 0.8f, 0.8f);
+        glLineWidth(2.0f);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 360; i += 10) {
+            float angle = (float)i * 3.14159f / 180.0f;
+            glVertex2f(centerX + cos(angle) * radius, centerY + sin(angle) * radius);
+        }
+        glEnd();
+        glLineWidth(1.0f);
+        
+        sprintf_s(buffer, sizeof(buffer), "Pitch: %.0f", pitch);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glRasterPos2f(screenWidth - 220, 45);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+        
+        sprintf_s(buffer, sizeof(buffer), "Roll: %.0f", roll);
+        glRasterPos2f(screenWidth - 220, 32);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+        
+        sprintf_s(buffer, sizeof(buffer), "Heading: %.0f", yaw);
+        glRasterPos2f(screenWidth - 105, 195);
+        for (char* c = buffer; *c != '\0'; c++) {
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+        }
+    }
+    
+    // Altitude warning when flying too high
     if (flightSim && flightSim->player.position.y > 100.0f) {
         glColor4f(1.0f, 0.0f, 0.0f, 0.7f + 0.3f * sin(arrowBobOffset * 5.0f));
         sprintf_s(buffer, sizeof(buffer), "WARNING: Fly Lower!");
@@ -975,12 +1300,11 @@ void Level2::renderHUD() {
         }
     }
     
-    // Restore matrices and states
+    // Restore matrices
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
     glMatrixMode(GL_MODELVIEW);
     glPopMatrix();
-    
     glPopAttrib();
 }
 
@@ -1004,6 +1328,9 @@ void Level2::renderAirportTerminal() {
     if (tex_airportTerminal != 0) {
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, tex_airportTerminal);
+    }
+    else {
+        glDisable(GL_TEXTURE_2D);
     }
     
     model_airportTerminal.Draw();
@@ -1114,7 +1441,7 @@ void Level2::checkBuildingCollision() {
 // --- REALISTIC RUNWAY SYSTEM ---
 void Level2::initAirport() {
     // Runway positioned away from the city
-    runwayPosition = Vector3f(-800.0f, 0.1f, -800.0f);  // Raised higher to prevent z-fighting
+    runwayPosition = Vector3f(-800.0f, 0.5f, -800.0f);  // Raise runway above ground to ensure visibility
     runwayRotation = 30.0f;   // Angled runway (heading 030)
     runwayLength = 700.0f;    // 700 units long (longer for easier landing)
     runwayWidth = 50.0f;      // 50 units wide
@@ -1132,8 +1459,19 @@ void Level2::renderAirport() {
     glRotatef(runwayRotation, 0.0f, 1.0f, 0.0f);
     
     // Enable texturing
+    glDisable(GL_CULL_FACE); // Draw both sides; avoid cull state issues
     glEnable(GL_TEXTURE_2D);
     glDisable(GL_LIGHTING);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);  // Pull runway slightly toward camera to prevent z-fighting
+
+    // Ensure we have a valid runway texture (fallback to gray if load failed)
+    if (tex_runway == 0) {
+        glGenTextures(1, &tex_runway);
+        glBindTexture(GL_TEXTURE_2D, tex_runway);
+        unsigned char gray[3] = { 80, 80, 80 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, gray);
+    }
     glBindTexture(GL_TEXTURE_2D, tex_runway);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -1154,6 +1492,7 @@ void Level2::renderAirport() {
     
     // Runway shoulders (slightly lighter concrete)
     glDisable(GL_TEXTURE_2D);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     float shoulderWidth = 8.0f;
     glColor3f(0.35f, 0.35f, 0.33f);
     
@@ -1197,6 +1536,7 @@ void Level2::renderAirport() {
     glVertex3f(-halfWidth, 0.02f, -halfLength + thresholdLength);
     glEnd();
     
+    glEnable(GL_CULL_FACE);
     glPopMatrix();
     glPopAttrib();
 }
@@ -1205,11 +1545,14 @@ void Level2::renderRunwayMarkings() {
     glPushAttrib(GL_ALL_ATTRIB_BITS);
     glPushMatrix();
     
-    glTranslatef(runwayPosition.x, runwayPosition.y + 0.03f, runwayPosition.z);
+    glTranslatef(runwayPosition.x, runwayPosition.y + 0.06f, runwayPosition.z); // lift markings to avoid z-fight
     glRotatef(runwayRotation, 0.0f, 1.0f, 0.0f);
     
     glDisable(GL_TEXTURE_2D);
     glDisable(GL_LIGHTING);
+    glDisable(GL_CULL_FACE);          // Ensure markings are not culled
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);    // Pull markings toward camera
     
     float halfLength = runwayLength / 2.0f;
     float halfWidth = runwayWidth / 2.0f;
@@ -1356,6 +1699,8 @@ void Level2::renderRunwayMarkings() {
     glVertex3f(num3X - 2*numScale, 0, numZ - 8*numScale);
     glEnd();
     
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glEnable(GL_CULL_FACE);
     glPopMatrix();
     glPopAttrib();
 }
@@ -1977,4 +2322,157 @@ void Level2::renderShadows() {
     
     // Runway shadow/AO (subtle under the runway area)
     shadowSystem.renderBaseAO(runwayPosition, runwayWidth, 0.15f);
+}
+
+// ============ CARDBOARD TREE SYSTEM ============
+
+void Level2::initTrees() {
+    trees.clear();
+    
+    // Forest density and coverage area (realistic forest cover)
+    const int numTrees = 500;  // Dense forest coverage
+    const float forestSize = 1500.0f;  // Cover a large area
+    const float minDistFromAirport = 300.0f;
+    const float minDistFromRunway = 200.0f;
+    const float minDistFromBuilding = 30.0f;
+    const float minTreeSpacing = 8.0f;  // Trees shouldn't be too close to each other
+    
+    int attempts = 0;
+    const int maxAttempts = numTrees * 10;  // Try up to 10x the target number
+    
+    while (trees.size() < numTrees && attempts < maxAttempts) {
+        attempts++;
+        
+        CardboardTree tree;
+        
+        // Random position in large area, avoiding center (where airport is)
+        float angle = (rand() % 360) * 3.14159f / 180.0f;
+        float distance = minDistFromAirport + (rand() % (int)(forestSize - minDistFromAirport));
+        
+        tree.position.x = runwayPosition.x + cos(angle) * distance;
+        tree.position.y = 0.0f;  // Ground level
+        tree.position.z = runwayPosition.z + sin(angle) * distance;
+        
+        // Check if position is clear
+        if (!isPositionClearForTree(tree.position)) {
+            continue;
+        }
+        
+        // Check spacing from other trees
+        bool tooClose = false;
+        for (size_t i = 0; i < trees.size(); i++) {
+            float dx = trees[i].position.x - tree.position.x;
+            float dz = trees[i].position.z - tree.position.z;
+            float dist = sqrt(dx * dx + dz * dz);
+            if (dist < minTreeSpacing) {
+                tooClose = true;
+                break;
+            }
+        }
+        if (tooClose) continue;
+        
+        // Random tree variation
+        tree.textureVariant = rand() % 3;  // 0, 1, or 2
+        tree.scale = 15.0f + (rand() % 10);  // 15-25 units tall
+        tree.rotation = (rand() % 360);  // Random rotation
+        
+        trees.push_back(tree);
+    }
+    
+}
+
+bool Level2::isPositionClearForTree(const Vector3f& pos) {
+    // Check distance from runway
+    float dx = pos.x - runwayPosition.x;
+    float dz = pos.z - runwayPosition.z;
+    float distFromRunway = sqrt(dx * dx + dz * dz);
+    if (distFromRunway < 200.0f) {
+        return false;
+    }
+    
+    // Check distance from airport terminal
+    float tdx = pos.x - terminalPosition.x;
+    float tdz = pos.z - terminalPosition.z;
+    float distFromTerminal = sqrt(tdx * tdx + tdz * tdz);
+    if (distFromTerminal < 100.0f) {
+        return false;
+    }
+    
+    // Check distance from buildings
+    for (size_t i = 0; i < buildings.size(); i++) {
+        float bx = pos.x - buildings[i].position.x;
+        float bz = pos.z - buildings[i].position.z;
+        float distFromBuilding = sqrt(bx * bx + bz * bz);
+        if (distFromBuilding < 30.0f) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+void Level2::renderTrees() {
+    if (!flightSim) return;
+    
+    Vector3f cameraPos = flightSim->player.position;
+    float renderDistance = 800.0f;  // Only render trees within this distance
+    
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.1f);
+    glEnable(GL_TEXTURE_2D);
+    
+    glDisable(GL_CULL_FACE);  // Render both sides of the cross
+    glDepthMask(GL_TRUE);
+    
+    for (size_t i = 0; i < trees.size(); i++) {
+        CardboardTree& tree = trees[i];
+        
+        // Distance culling
+        float dx = tree.position.x - cameraPos.x;
+        float dz = tree.position.z - cameraPos.z;
+        float dist = sqrt(dx * dx + dz * dz);
+        if (dist > renderDistance) continue;
+        
+        // Bind appropriate tree texture
+        glBindTexture(GL_TEXTURE_2D, tex_tree[tree.textureVariant]);
+        
+        glPushMatrix();
+        glTranslatef(tree.position.x, tree.position.y, tree.position.z);
+        
+        // Draw two crossed quads (like Minecraft grass/flowers)
+        float halfSize = tree.scale * 0.5f;
+        float height = tree.scale;
+        
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        
+        // First quad (along X axis)
+        glPushMatrix();
+        glRotatef(tree.rotation, 0, 1, 0);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 1.0f); glVertex3f(-halfSize, 0.0f, 0.0f);
+        glTexCoord2f(1.0f, 1.0f); glVertex3f(halfSize, 0.0f, 0.0f);
+        glTexCoord2f(1.0f, 0.0f); glVertex3f(halfSize, height, 0.0f);
+        glTexCoord2f(0.0f, 0.0f); glVertex3f(-halfSize, height, 0.0f);
+        glEnd();
+        glPopMatrix();
+        
+        // Second quad (perpendicular, along Z axis)
+        glPushMatrix();
+        glRotatef(tree.rotation + 90.0f, 0, 1, 0);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 1.0f); glVertex3f(-halfSize, 0.0f, 0.0f);
+        glTexCoord2f(1.0f, 1.0f); glVertex3f(halfSize, 0.0f, 0.0f);
+        glTexCoord2f(1.0f, 0.0f); glVertex3f(halfSize, height, 0.0f);
+        glTexCoord2f(0.0f, 0.0f); glVertex3f(-halfSize, height, 0.0f);
+        glEnd();
+        glPopMatrix();
+        
+        glPopMatrix();
+    }
+    
+    glEnable(GL_CULL_FACE);
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_BLEND);
 }

@@ -62,12 +62,30 @@ private:
     // Models
     Model_3DS model_carrier;        // Aircraft carrier
     Model_3DS model_wrench;         // Toolkit/wrench collectable
+    Model_3DS model_crane;          // Port crane
+    Model_3DS model_container;      // Shipping container
+    Model_3DS model_helipad;        // Helipad
+    Model_3DS model_tents;          // Tents
+    Model_3DS model_tank;           // Tank
+    Model_3DS model_truck;          // Truck
+    Model_3DS model_rocket;         // Rocket
     
     // Textures
     GLuint tex_water;               // Water texture
     GLuint tex_concrete;            // Port concrete texture
     GLuint tex_carrier;             // Carrier deck texture
     GLuint tex_rings;               // Rings and rockets texture
+    GLuint tex_rocket;              // Rocket texture
+    GLuint tex_container_red;       // Red container texture
+    GLuint tex_container_blue;      // Blue container texture
+    GLuint tex_container_yellow;    // Yellow container texture
+    GLuint tex_helipad_metal;       // Helipad metal texture
+    GLuint tex_tent;                // Tent texture
+    GLuint tex_tank_rubber;         // Tank rubber texture
+    GLuint tex_tank1;               // Tank texture 1
+    GLuint tex_tank2;               // Tank texture 2
+    GLuint tex_tank3;               // Tank texture 3
+    GLuint tex_tank4;               // Tank texture 4
     
     // Particle Effects System
     ParticleEffects particleEffects;

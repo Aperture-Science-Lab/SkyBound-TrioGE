@@ -6,6 +6,7 @@
 #include <Vector3f.h>
 #include "Model_3DS.h"
 #include "SmokeSystem.h"
+#include <string>
 
 #define PI 3.14159265359
 #define DEG2RAD(x) ((x) * PI / 180.0f)
@@ -35,11 +36,14 @@ public:
     float getFOV();
     void drawPlane();
     void drawPlane(bool showWingLights);  // Overload with wing lights option
-    void loadModel(char* path);
+    void loadModel(const char* path);
+    void loadModelWithTexture(const char* modelPath, const char* texturePath);  // Load model with custom texture
     
     FlightPlayer player;
     Model_3DS model;
     bool modelLoaded;  // Track if model is loaded for THIS instance
+    std::string loadedModelPath;   // Remember which model to (re)load
+    std::string loadedTexturePath; // Remember texture for reload
     
     bool keyState[256];
     int cameraMode;

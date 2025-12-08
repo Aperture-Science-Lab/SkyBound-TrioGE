@@ -1,6 +1,7 @@
 #include "FlightController.h"
 #include <stdio.h>
 #include <iostream>
+#include <cstring>
 
 FlightController::FlightController() {
     modelLoaded = false;  // Model needs to be loaded for this instance
@@ -310,7 +311,18 @@ void FlightController::drawPlane() {
 }
 
 void FlightController::drawPlane(bool showWingLights) {
-    FlightController::loadModel("models/plane/mitsubishi_a6m2_zero_model_11.3ds"); // Ensure model is loaded
+    // Lazy reload if something cleared the model after level transitions
+    if (!modelLoaded && !loadedModelPath.empty()) {
+        loadModelWithTexture(loadedModelPath.c_str(), loadedTexturePath.c_str());
+    }
+    // Fallback: if still not loaded, try default plane 1
+    if (!modelLoaded) {
+        loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
+    }
+    if (!modelLoaded || model.numObjects == 0) {
+        printf("drawPlane: model not loaded or empty (loaded=%d, objects=%d)\n", modelLoaded, model.numObjects);
+        return;  // Nothing to draw if load failed
+    }
     
     if(isCrashed) glColor3f(1,0,0);
     else glColor3f(1,1,1);
@@ -326,7 +338,16 @@ void FlightController::drawPlane(bool showWingLights) {
     };
     
     glMultMatrixf(rotMatrix);
-    glScalef(1, 1, 1); 
+    glScalef(1, 1, 1);
+
+    // Model-specific orientation fixes
+    bool isPlane2 = loadedModelPath.find("plane 2") != std::string::npos;
+    if (isPlane2) {
+        glRotatef(-90.0f, 1, 0, 0);   // correct pitch (was flipping upside-down)
+        glRotatef(180.0f, 0, 1, 0);
+        glRotatef(180.0f, 0, 1, 0);  // plane 2 faces sideways in its source model
+    }
+
     glRotatef(90, 1, 0, 0);
     
     model.Draw();
@@ -423,15 +444,57 @@ void FlightController::renderWingLights() {
     glPopAttrib();
 }
 
-void FlightController::loadModel(char* path) {
+void FlightController::loadModel(const char* path) {
     // Load model for THIS instance (not static to allow multiple FlightController instances)
     if(!modelLoaded) {
-        model.Load(path);
+        model.Load(const_cast<char*>(path));
         for (int i = 0; i < model.numMaterials; i++) {
-            model.Materials[i].tex.Load("models/plane/mitsubishi_a6m2_zero_texture.bmp");
+                model.Materials[i].tex.Load(const_cast<char*>("models/plane/mitsubishi_a6m2_zero_texture.bmp"));
             model.Materials[i].textured = true;
         }
         modelLoaded = true;
+        loadedModelPath = path ? path : "";
+        loadedTexturePath = "models/plane/mitsubishi_a6m2_zero_texture.bmp";
+    }
+}
+
+void FlightController::loadModelWithTexture(const char* modelPath, const char* texturePath) {
+    // Load model with custom texture for THIS instance
+    printf("loadModelWithTexture called: model=%s, tex=%s, modelLoaded=%d\n", modelPath, texturePath, modelLoaded);
+    if(!modelLoaded) {
+        printf("Loading model %s...\n", modelPath);
+        model.Load(const_cast<char*>(modelPath));
+        printf("Model loaded: objects=%d, materials=%d\n", model.numObjects, model.numMaterials);
+        
+        if (texturePath && strlen(texturePath) > 0) {
+            printf("Loading texture %s for %d materials...\n", texturePath, model.numMaterials);
+            for (int i = 0; i < model.numMaterials; i++) {
+                model.Materials[i].tex.Load(const_cast<char*>(texturePath));
+                model.Materials[i].textured = true;
+            }
+            loadedTexturePath = texturePath;
+        } else {
+            printf("No texture path provided, using embedded or previously assigned textures\n");
+            // If the model came without textures, apply default plane1 texture so the mesh is visible
+            if (model.numMaterials > 0) {
+                const char* fallbackTex = "models/plane/mitsubishi_a6m2_zero_texture.bmp";
+                for (int i = 0; i < model.numMaterials; i++) {
+                    // GLTexture uses texture[0] as the GL id
+                    if (model.Materials[i].tex.texture[0] == 0) {
+                        model.Materials[i].tex.Load(const_cast<char*>(fallbackTex));
+                        model.Materials[i].textured = true;
+                    }
+                }
+                loadedTexturePath = fallbackTex;
+            } else {
+                loadedTexturePath.clear();
+            }
+        }
+        modelLoaded = true;
+        loadedModelPath = modelPath ? modelPath : "";
+        printf("loadModelWithTexture complete\n");
+    } else {
+        printf("Model already loaded, skipping\n");
     }
 }
 

@@ -34,6 +34,14 @@ struct BuildingObstacle {
     float depth;          // Collision box depth
 };
 
+// Structure for Cardboard Trees (cross-texture billboards)
+struct CardboardTree {
+    Vector3f position;
+    int textureVariant;   // 0, 1, or 2 for different tree textures
+    float scale;          // Size variation
+    float rotation;       // Y-axis rotation for visual variety
+};
+
 class Level2 : public Level {
 public:
     Level2();
@@ -60,10 +68,11 @@ private:
     Model_3DS model_buildings[10];  // 10 different building models
     Model_3DS model_airportTerminal; // Airport terminal model
     GLuint tex_airportTerminal;      // Airport terminal texture
-    GLTexture tex_ground;
+    GLuint tex_ground;              // Ground texture (changed from GLTexture to GLuint)
     GLuint tex_runway;              // Runway texture
     GLuint tex_grass;               // Grass billboard texture
     GLuint tex_fuelContainer;       // Fuel container texture
+    GLuint tex_tree[3];             // Three tree texture variations
     
     // Optimized Billboard Grass System (no 3D models - much faster)
     static const int GRASS_GRID_SIZE = 12;      // Grid cells around player (reduced)
@@ -146,6 +155,12 @@ private:
     void renderFuelContainers();
     void checkFuelCollision();
     void renderHUD();
+    
+    // Cardboard Tree System (forest cover)
+    std::vector<CardboardTree> trees;
+    void initTrees();
+    void renderTrees();
+    bool isPositionClearForTree(const Vector3f& pos);
     
     void renderGround();
     void loadAssets();

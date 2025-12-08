@@ -4,6 +4,7 @@
 #include "Model_3DS.h"
 #include "GLTexture.h"
 #include "GameManager.h"
+#include "PlaneSelectionLevel.h"
 #include "Level1.h"
 #include "Level2.h"
 #include <Vector3f.h>
@@ -63,7 +64,7 @@ void InitMaterial()
 //=======================================================================
 void myInit(void)
 {
-	glClearColor(0.0, 0.0, 0.0, 0.0);
+	glClearColor(0.35, 0.45, 0.65, 1.0);  // Sky blue default
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
@@ -86,6 +87,8 @@ void myDisplay(void)
 {
 	// Delegate rendering to GameManager
 	GameManager::getInstance().render();
+	glFlush();
+    glutSwapBuffers();
 }
 
 //=======================================================================
@@ -114,6 +117,24 @@ void myKeyboard(unsigned char button, int x, int y)
 void myKeyboardUp(unsigned char button, int x, int y) {
     // Forward input to GameManager
     GameManager::getInstance().handleKeyboardUp(button);
+}
+
+void mySpecial(int key, int x, int y) {
+    // Handle special keys (arrow keys) for plane selection
+    Level* currentLevel = GameManager::getInstance().getCurrentLevel();
+    PlaneSelectionLevel* planeSelect = dynamic_cast<PlaneSelectionLevel*>(currentLevel);
+    if (planeSelect) {
+        planeSelect->handleSpecialKeys(key, true);
+    }
+}
+
+void mySpecialUp(int key, int x, int y) {
+    // Handle special key release
+    Level* currentLevel = GameManager::getInstance().getCurrentLevel();
+    PlaneSelectionLevel* planeSelect = dynamic_cast<PlaneSelectionLevel*>(currentLevel);
+    if (planeSelect) {
+        planeSelect->handleSpecialKeys(key, false);
+    }
 }
 
 //=======================================================================
@@ -160,25 +181,31 @@ int main(int argc, char** argv)
     
     glutKeyboardFunc(myKeyboard);
     glutKeyboardUpFunc(myKeyboardUp);
+    glutSpecialFunc(mySpecial);
+    glutSpecialUpFunc(mySpecialUp);
     
     glutPassiveMotionFunc(myMotion);
     glutMotionFunc(myMotion);
     glutIdleFunc(Anim);
 
-	myInit();
+    myInit();
     
     // Initialize GameManager and register levels
+    PlaneSelectionLevel* planeSelectLevel = new PlaneSelectionLevel();
     Level1* carrierLevel = new Level1();
     Level2* flightLevel = new Level2();
     
-    GameManager::getInstance().registerLevel("Level1", carrierLevel);
-    GameManager::getInstance().registerLevel("Level2", flightLevel);
+    GameManager::getInstance().registerLevel("planeselect", planeSelectLevel);
+    GameManager::getInstance().registerLevel("level1", carrierLevel);
+    GameManager::getInstance().registerLevel("level2", flightLevel);
     
-    // Initialize and switch to Level 1 (Carrier Mission)
+    // Initialize all levels
+    planeSelectLevel->init();
     carrierLevel->init();
     flightLevel->init();
-    GameManager::getInstance().switchToLevel("Level1");
     
+    // Start with plane selection screen
+    GameManager::getInstance().switchToLevel("planeselect");
     lastTime = glutGet(GLUT_ELAPSED_TIME);
 
 	glutMainLoop();

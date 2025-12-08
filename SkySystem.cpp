@@ -42,53 +42,70 @@ SkySystem::~SkySystem() {
 }
 
 void SkySystem::init() {
+    // Try multiple relative roots so textures load regardless of working directory
+    auto tryLoad = [&](const char* relativePath, unsigned int& texId, bool flipVertical = false) -> bool {
+        const char* prefixes[] = { "", "../", "../../" };
+        char fullPath[260];
+        for (int i = 0; i < 3; ++i) {
+            sprintf_s(fullPath, sizeof(fullPath), "%s%s", prefixes[i], relativePath);
+            if (loadSkyTexture(fullPath, texId, flipVertical)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     // Load all sky textures - try multiple paths
-    if (!loadSkyTexture("textures/sky.bmp", tex_sky_morning)) {
-        loadSkyTexture("../textures/sky.bmp", tex_sky_morning);
-    }
-    if (!loadSkyTexture("textures/noonsky.bmp", tex_sky_noon, true)) {
-        loadSkyTexture("../textures/noonsky.bmp", tex_sky_noon, true);
-    }
-    if (!loadSkyTexture("textures/sunsetsky.bmp", tex_sky_sunset, true)) {
-        loadSkyTexture("../textures/sunsetsky.bmp", tex_sky_sunset, true);
-    }
-    if (!loadSkyTexture("textures/nightsky.bmp", tex_sky_night, true)) {
-        loadSkyTexture("../textures/nightsky.bmp", tex_sky_night, true);
-    }
+    tryLoad("textures/sky.bmp", tex_sky_morning);
+    tryLoad("textures/noonsky.bmp", tex_sky_noon, true);
+    tryLoad("textures/sunsetsky.bmp", tex_sky_sunset, true);
+    tryLoad("textures/nightsky.bmp", tex_sky_night, true);
+
+    // Solid-color fallbacks to avoid black sky if loading fails
+    auto ensureSky = [&](unsigned int& texId, unsigned char r, unsigned char g, unsigned char b) {
+        if (texId != 0) return;
+        glGenTextures(1, &texId);
+        glBindTexture(GL_TEXTURE_2D, texId);
+        unsigned char pixel[3] = { r, g, b };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, pixel);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    };
+
+    ensureSky(tex_sky_morning, 135, 180, 255);
+    ensureSky(tex_sky_noon,    170, 210, 255);
+    ensureSky(tex_sky_sunset,  200, 140, 120);
+    ensureSky(tex_sky_night,    10,  10,  25);
     
     // Load cloud textures - with fallback to procedural generation
-    if (!loadSkyTexture("textures/cloude1.bmp", tex_cloud[0])) {
-        if (!loadSkyTexture("../textures/cloude1.bmp", tex_cloud[0])) {
-            // Generate fallback cloud texture
-            glGenTextures(1, &tex_cloud[0]);
-            glBindTexture(GL_TEXTURE_2D, tex_cloud[0]);
-            unsigned char cloudTex[64 * 64 * 4];
-            for (int y = 0; y < 64; y++) {
-                for (int x = 0; x < 64; x++) {
-                    float dx = (x - 32) / 32.0f;
-                    float dy = (y - 32) / 32.0f;
-                    float dist = sqrt(dx*dx + dy*dy);
-                    float alpha = (1.0f - dist) * 1.5f;
-                    if (alpha < 0) alpha = 0; if (alpha > 1) alpha = 1;
-                    int idx = (y * 64 + x) * 4;
-                    cloudTex[idx] = cloudTex[idx+1] = cloudTex[idx+2] = 255;
-                    cloudTex[idx+3] = (unsigned char)(alpha * 200);
-                }
+    if (!tryLoad("textures/cloude1.bmp", tex_cloud[0])) {
+        // Generate fallback cloud texture
+        glGenTextures(1, &tex_cloud[0]);
+        glBindTexture(GL_TEXTURE_2D, tex_cloud[0]);
+        unsigned char cloudTex[64 * 64 * 4];
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                float dx = (x - 32) / 32.0f;
+                float dy = (y - 32) / 32.0f;
+                float dist = sqrt(dx*dx + dy*dy);
+                float alpha = (1.0f - dist) * 1.5f;
+                if (alpha < 0) alpha = 0; if (alpha > 1) alpha = 1;
+                int idx = (y * 64 + x) * 4;
+                cloudTex[idx] = cloudTex[idx+1] = cloudTex[idx+2] = 255;
+                cloudTex[idx+3] = (unsigned char)(alpha * 200);
             }
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, cloudTex);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         }
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, cloudTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
-    if (!loadSkyTexture("textures/cloude2.bmp", tex_cloud[1])) {
-        if (!loadSkyTexture("../textures/cloude2.bmp", tex_cloud[1])) {
-            tex_cloud[1] = tex_cloud[0];  // Use first texture as fallback
-        }
+    if (!tryLoad("textures/cloude2.bmp", tex_cloud[1])) {
+        tex_cloud[1] = tex_cloud[0];  // Use first texture as fallback
     }
-    if (!loadSkyTexture("textures/cloude3.bmp", tex_cloud[2])) {
-        if (!loadSkyTexture("../textures/cloude3.bmp", tex_cloud[2])) {
-            tex_cloud[2] = tex_cloud[0];  // Use first texture as fallback
-        }
+    if (!tryLoad("textures/cloude3.bmp", tex_cloud[2])) {
+        tex_cloud[2] = tex_cloud[0];  // Use first texture as fallback
     }
     
     generateFlareTextures();
@@ -269,7 +286,7 @@ bool SkySystem::loadSkyTexture(const char* filename, unsigned int& texId, bool f
     }
     
     // Read BMP header
-    unsigned char header[54];
+    unsigned char header[138]; // Larger buffer for V4/V5 headers
     size_t headerRead = fread(header, 1, 54, file);
     if (headerRead < 54 || header[0] != 'B' || header[1] != 'M') {
         fclose(file);
@@ -281,54 +298,93 @@ bool SkySystem::loadSkyTexture(const char* filename, unsigned int& texId, bool f
     int height = *(int*)&header[22];
     int bitsPerPixel = *(short*)&header[28];
     int dataOffset = *(int*)&header[10];
+    int headerSize = *(int*)&header[14];
     
     if (width <= 0 || height <= 0) {
         fclose(file);
         return false;
     }
     
-    // Seek to pixel data
-    fseek(file, dataOffset, SEEK_SET);
-    
-    // Calculate row size with padding (BMP rows are 4-byte aligned)
-    int bytesPerPixel = bitsPerPixel / 8;
-    int rowSize = ((width * bytesPerPixel + 3) / 4) * 4;
-    int imageSize = rowSize * abs(height);
-    
-    unsigned char* bmpData = new unsigned char[imageSize];
-    size_t bytesRead = fread(bmpData, 1, imageSize, file);
-    fclose(file);
-    
-    if (bytesRead == 0) {
-        delete[] bmpData;
-        return false;
-    }
-    
-    // Convert BGR to RGB and flip vertically
-    unsigned char* rgbData = new unsigned char[width * abs(height) * 3];
     int absHeight = abs(height);
+    unsigned char* rgbData = new unsigned char[width * absHeight * 3];
     
-    for (int y = 0; y < absHeight; y++) {
-        for (int x = 0; x < width; x++) {
-            // Standard BMP flip, with optional extra flip for upside-down textures
+    if (bitsPerPixel == 8) {
+        // 8-bit paletted BMP
+        fseek(file, 14 + headerSize, SEEK_SET);
+        unsigned char palette[1024];
+        if (fread(palette, 1, 1024, file) != 1024) {
+            delete[] rgbData;
+            fclose(file);
+            return false;
+        }
+        
+        fseek(file, dataOffset, SEEK_SET);
+        int rowSize = ((width + 3) / 4) * 4;
+        unsigned char* indexData = new unsigned char[rowSize * absHeight];
+        if (fread(indexData, 1, rowSize * absHeight, file) != (size_t)(rowSize * absHeight)) {
+            delete[] indexData;
+            delete[] rgbData;
+            fclose(file);
+            return false;
+        }
+        fclose(file);
+        
+        for (int y = 0; y < absHeight; y++) {
             int srcY;
             if (flipVertical) {
-                srcY = (height > 0) ? y : (absHeight - 1 - y);  // Opposite of normal
+                srcY = (height > 0) ? y : (absHeight - 1 - y);
             } else {
-                srcY = (height > 0) ? (absHeight - 1 - y) : y;  // Normal BMP flip
+                srcY = (height > 0) ? (absHeight - 1 - y) : y;
             }
-            int srcIdx = srcY * rowSize + x * bytesPerPixel;
-            int dstIdx = (y * width + x) * 3;
             
-            if (bytesPerPixel >= 3) {
-                rgbData[dstIdx + 0] = bmpData[srcIdx + 2];  // R
-                rgbData[dstIdx + 1] = bmpData[srcIdx + 1];  // G
-                rgbData[dstIdx + 2] = bmpData[srcIdx + 0];  // B
+            for (int x = 0; x < width; x++) {
+                unsigned char index = indexData[srcY * rowSize + x];
+                int destIdx = (y * width + x) * 3;
+                rgbData[destIdx + 0] = palette[index * 4 + 2];
+                rgbData[destIdx + 1] = palette[index * 4 + 1];
+                rgbData[destIdx + 2] = palette[index * 4 + 0];
             }
         }
+        delete[] indexData;
     }
-    
-    delete[] bmpData;
+    else {
+        // 24 or 32 bit BMP
+        fseek(file, dataOffset, SEEK_SET);
+        int bytesPerPixel = bitsPerPixel / 8;
+        int rowSize = ((width * bytesPerPixel + 3) / 4) * 4;
+        int imageSize = rowSize * absHeight;
+        
+        unsigned char* bmpData = new unsigned char[imageSize];
+        size_t bytesRead = fread(bmpData, 1, imageSize, file);
+        fclose(file);
+        
+        if (bytesRead == 0) {
+            delete[] bmpData;
+            delete[] rgbData;
+            return false;
+        }
+        
+        for (int y = 0; y < absHeight; y++) {
+            int srcY;
+            if (flipVertical) {
+                srcY = (height > 0) ? y : (absHeight - 1 - y);
+            } else {
+                srcY = (height > 0) ? (absHeight - 1 - y) : y;
+            }
+            
+            for (int x = 0; x < width; x++) {
+                int srcIdx = srcY * rowSize + x * bytesPerPixel;
+                int dstIdx = (y * width + x) * 3;
+                
+                if (bytesPerPixel >= 3) {
+                    rgbData[dstIdx + 0] = bmpData[srcIdx + 2];  // R
+                    rgbData[dstIdx + 1] = bmpData[srcIdx + 1];  // G
+                    rgbData[dstIdx + 2] = bmpData[srcIdx + 0];  // B
+                }
+            }
+        }
+        delete[] bmpData;
+    }
     
     glGenTextures(1, &texId);
     glBindTexture(GL_TEXTURE_2D, texId);
@@ -470,6 +526,7 @@ void SkySystem::renderSky(const Vector3f& playerPosition) {
     
     // Setup for sky rendering
     glEnable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);  // Render inside of sphere regardless of global cull state
     glDepthMask(GL_FALSE);
     glDisable(GL_LIGHTING);
     

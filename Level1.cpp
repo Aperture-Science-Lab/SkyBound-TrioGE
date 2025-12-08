@@ -1,75 +1,93 @@
 #include "Level1.h"
 #include "GameManager.h"
+#include "PlaneSelectionLevel.h"
 #include <glut.h>
 #include <cmath>
 #include <stdio.h>
 #include <cstdlib>
+#include <cstring>
+#include "HUDRenderer.h"
 
 extern void loadBMP(unsigned int* textureID, char* strFileName, int wrap);
 
 // Custom BMP loader that handles both 8-bit paletted and 24-bit BMPs
-static bool loadGroundTexture(GLuint* texID, const char* filename) {
+static bool loadGroundTexture(GLuint* texID, const char* filename, bool useAlpha = false) {
     FILE* file = NULL;
     fopen_s(&file, filename, "rb");
     if (!file) {
         return false;
     }
-    
-    unsigned char header[138];
+
+    // Read BMP header (54 bytes minimum, but BITMAPV4/V5 can be larger)
+    unsigned char header[138];  // Large enough for BITMAPV4HEADER
     memset(header, 0, sizeof(header));
     if (fread(header, 1, 54, file) != 54 || header[0] != 'B' || header[1] != 'M') {
         fclose(file);
         return false;
     }
-    
+
+    // Extract info
     int dataOffset = *(int*)&header[10];
-    int headerSize = *(int*)&header[14];
+    int headerSize = *(int*)&header[14];  // DIB header size
     int width = *(int*)&header[18];
     int height = *(int*)&header[22];
     int bitsPerPixel = *(short*)&header[28];
-    
+    int compression = *(int*)&header[30];
+
     if (width <= 0 || height <= 0) {
         fclose(file);
         return false;
     }
-    
+
+    // Handle negative height (top-down bitmap)
     bool topDown = height < 0;
     if (topDown) height = -height;
-    
+
     unsigned char* rgbData = new unsigned char[width * height * 3];
-    
+
     if (bitsPerPixel == 8) {
-        fseek(file, 14 + headerSize, SEEK_SET);
-        unsigned char palette[1024];
+        // 8-bit paletted BMP
+        // Read the color palette (located right after the DIB header)
+        fseek(file, 14 + headerSize, SEEK_SET);  // 14 = BMP file header size
+
+        unsigned char palette[1024];  // 256 colors * 4 bytes (BGRA)
         if (fread(palette, 1, 1024, file) != 1024) {
             delete[] rgbData;
             fclose(file);
             return false;
         }
+
+        // Seek to pixel data
         fseek(file, dataOffset, SEEK_SET);
+
+        // Calculate row size with padding (rows are 4-byte aligned)
         int rowSize = ((width + 3) / 4) * 4;
         unsigned char* indexData = new unsigned char[rowSize * height];
+
         if (fread(indexData, 1, rowSize * height, file) != (size_t)(rowSize * height)) {
             delete[] indexData;
             delete[] rgbData;
             fclose(file);
             return false;
         }
+
+        // Convert indexed to RGB using palette
         for (int y = 0; y < height; y++) {
             int srcY = topDown ? y : (height - 1 - y);
             for (int x = 0; x < width; x++) {
                 unsigned char index = indexData[srcY * rowSize + x];
                 int destIdx = (y * width + x) * 3;
-                rgbData[destIdx + 0] = palette[index * 4 + 2];
-                rgbData[destIdx + 1] = palette[index * 4 + 1];
-                rgbData[destIdx + 2] = palette[index * 4 + 0];
+                rgbData[destIdx + 0] = palette[index * 4 + 2];  // R (palette is BGRA)
+                rgbData[destIdx + 1] = palette[index * 4 + 1];  // G
+                rgbData[destIdx + 2] = palette[index * 4 + 0];  // B
             }
         }
         delete[] indexData;
     }
-    else if (bitsPerPixel == 24) {
+    else if (bitsPerPixel == 16) {
+        // 16-bit 565/555 BMP
         fseek(file, dataOffset, SEEK_SET);
-        int rowSize = ((width * 3 + 3) / 4) * 4;
+        int rowSize = ((width * 2 + 3) / 4) * 4;
         unsigned char* bmpData = new unsigned char[rowSize * height];
         if (fread(bmpData, 1, rowSize * height, file) != (size_t)(rowSize * height)) {
             delete[] bmpData;
@@ -80,23 +98,106 @@ static bool loadGroundTexture(GLuint* texID, const char* filename) {
         for (int y = 0; y < height; y++) {
             int srcY = topDown ? y : (height - 1 - y);
             for (int x = 0; x < width; x++) {
-                int srcIdx = srcY * rowSize + x * 3;
+                int srcIdx = srcY * rowSize + x * 2;
+                unsigned short pix = bmpData[srcIdx] | (bmpData[srcIdx + 1] << 8);
+                // Assume 565; fallback to 555 by masking
+                unsigned char r = (unsigned char)((pix >> 11) & 0x1F);
+                unsigned char g = (unsigned char)((pix >> 5)  & 0x3F);
+                unsigned char b = (unsigned char)(pix & 0x1F);
+                // Expand to 8-bit per channel
+                r = (r << 3) | (r >> 2);
+                g = (g << 2) | (g >> 4);
+                b = (b << 3) | (b >> 2);
                 int destIdx = (y * width + x) * 3;
-                rgbData[destIdx + 0] = bmpData[srcIdx + 2];
-                rgbData[destIdx + 1] = bmpData[srcIdx + 1];
-                rgbData[destIdx + 2] = bmpData[srcIdx + 0];
+                rgbData[destIdx + 0] = r;
+                rgbData[destIdx + 1] = g;
+                rgbData[destIdx + 2] = b;
             }
         }
         delete[] bmpData;
     }
+    else if (bitsPerPixel == 24) {
+        // 24-bit RGB BMP
+        fseek(file, dataOffset, SEEK_SET);
+
+        int rowSize = ((width * 3 + 3) / 4) * 4;
+        unsigned char* bmpData = new unsigned char[rowSize * height];
+
+        if (fread(bmpData, 1, rowSize * height, file) != (size_t)(rowSize * height)) {
+            delete[] bmpData;
+            delete[] rgbData;
+            fclose(file);
+            return false;
+        }
+
+        // Convert BGR to RGB
+        for (int y = 0; y < height; y++) {
+            int srcY = topDown ? y : (height - 1 - y);
+            for (int x = 0; x < width; x++) {
+                int srcIdx = srcY * rowSize + x * 3;
+                int destIdx = (y * width + x) * 3;
+                rgbData[destIdx + 0] = bmpData[srcIdx + 2];  // R
+                rgbData[destIdx + 1] = bmpData[srcIdx + 1];  // G
+                rgbData[destIdx + 2] = bmpData[srcIdx + 0];  // B
+            }
+        }
+        delete[] bmpData;
+    }
+    else if (bitsPerPixel == 32) {
+        // 32-bit ARGB/BGRA BMP
+        delete[] rgbData;  // We need RGBA instead
+        unsigned char* rgbaData = new unsigned char[width * height * 4];
+
+        fseek(file, dataOffset, SEEK_SET);
+        int rowSize = width * 4;
+        unsigned char* bmpData = new unsigned char[rowSize * height];
+
+        if (fread(bmpData, 1, rowSize * height, file) != (size_t)(rowSize * height)) {
+            delete[] bmpData;
+            delete[] rgbaData;
+            fclose(file);
+            return false;
+        }
+
+        // Convert BGRA to RGBA
+        for (int y = 0; y < height; y++) {
+            int srcY = topDown ? y : (height - 1 - y);
+            for (int x = 0; x < width; x++) {
+                int srcIdx = srcY * rowSize + x * 4;
+                int destIdx = (y * width + x) * 4;
+                rgbaData[destIdx + 0] = bmpData[srcIdx + 2];  // R
+                rgbaData[destIdx + 1] = bmpData[srcIdx + 1];  // G
+                rgbaData[destIdx + 2] = bmpData[srcIdx + 0];  // B
+                // If useAlpha is false, force alpha to 255 (opaque)
+                rgbaData[destIdx + 3] = useAlpha ? bmpData[srcIdx + 3] : 255;
+            }
+        }
+        delete[] bmpData;
+
+        fclose(file);
+
+        // Create OpenGL texture with alpha
+        glGenTextures(1, texID);
+        glBindTexture(GL_TEXTURE_2D, *texID);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        gluBuild2DMipmaps(GL_TEXTURE_2D, GL_RGBA, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgbaData);
+
+        delete[] rgbaData;
+        return true;
+    }
     else {
+        // Unsupported format
         delete[] rgbData;
         fclose(file);
         return false;
     }
-    
+
     fclose(file);
-    
+
+    // Create OpenGL texture
     glGenTextures(1, texID);
     glBindTexture(GL_TEXTURE_2D, *texID);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -104,7 +205,7 @@ static bool loadGroundTexture(GLuint* texID, const char* filename) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     gluBuild2DMipmaps(GL_TEXTURE_2D, GL_RGB, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgbData);
-    
+
     delete[] rgbData;
     return true;
 }
@@ -114,12 +215,15 @@ Level1::Level1() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(
     ringTimer(0.0f), gameTimer(0.0f), maxGameTime(600.0f), score(0),
     gameOver(false), showGameOver(false), levelComplete(false), showLevelComplete(false),
     levelCompleteTimer(0.0f), tex_water(0), tex_concrete(0), tex_carrier(0), tex_rings(0),
+    tex_rocket(0), tex_container_red(0), tex_container_blue(0), tex_container_yellow(0),
+    tex_helipad_metal(0), tex_tent(0),
+    tex_tank_rubber(0), tex_tank1(0), tex_tank2(0), tex_tank3(0), tex_tank4(0),
     rocketSpawnTimer(0.0f), rocketSpawnInterval(5.0f),
     waterLevel(-2.0f), portHeight(3.0f),
     spawnProtectionTimer(3.0f), hasSpawnProtection(true) {
     
     // Aircraft carrier positioned in water at surface level
-    carrierPosition = Vector3f(0.0f, waterLevel + 2.0f, -100.0f);  // At water surface
+    carrierPosition = Vector3f(0.0f, waterLevel + 50.0f, -100.0f);  // At water surface
     carrierRotation = 0.0f;
     carrierScale = 0.001f;  // Appropriate scale
 }
@@ -130,6 +234,16 @@ Level1::~Level1() {
 
 void Level1::init() {
     flightSim = new FlightController();
+    
+    // Load the selected plane model and texture
+    int selectedPlane = PlaneSelectionLevel::getSelectedPlane();
+    if (selectedPlane == 1) {
+        // Load plane 2
+        flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
+    } else {
+        // Load plane 1 (default)
+        flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
+    }
     
     // Start plane on the carrier deck - stationary, ready for takeoff
     // Position plane at the back of the carrier deck
@@ -171,11 +285,170 @@ void Level1::loadAssets() {
     // Load wrench/toolkit model
     model_wrench.Load("Models/wrench/wrench.3ds");
     
-    // Load carrier texture
-    loadBMP(&tex_carrier, "models/carrier/Asphalt_A01_100cm.bmp", 1);
+    // Load port crane model
+    model_crane.Load("Models/port crane/crane.3ds");
+    
+    // Load shipping container model
+    model_container.Load("Models/containor/containor.3ds");
+    
+    // Load helipad model
+    model_helipad.Load("Models/helipad/helipad.3ds");
+    
+    // Load tents model
+    model_tents.Load("Models/tents/tents.3ds");
+    
+    // Load tank model
+    model_tank.Load("Models/tank/tiger_tank.3DS");
+    
+    // Load truck model
+    model_truck.Load("Models/truck/truck.3DS");
+    
+    // Load rocket model
+    model_rocket.Load("Models/rocket/Rocket.3ds");
+
+    // Load rocket texture
+    if (!loadGroundTexture(&tex_rocket, "Models/rocket/Military Rocket Textures/Military Rocket_mat_BaseColor.bmp")) {
+        printf("Failed to load rocket texture, using fallback\n");
+        glGenTextures(1, &tex_rocket);
+        glBindTexture(GL_TEXTURE_2D, tex_rocket);
+        unsigned char gray[3] = { 160, 160, 160 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, gray);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    
+    // Load container textures
+    if (!loadGroundTexture(&tex_container_red, "Models/containor/red-corrugated-surface.bmp")) {
+        printf("Failed to load red container texture\n");
+    }
+    if (!loadGroundTexture(&tex_container_blue, "Models/containor/blue-corrugated-surface.bmp")) {
+        printf("Failed to load blue container texture\n");
+    }
+    if (!loadGroundTexture(&tex_container_yellow, "Models/containor/yellow-corrugated-surface.bmp")) {
+        printf("Failed to load yellow container texture\n");
+    }
+    
+    // Load helipad texture
+    if (!loadGroundTexture(&tex_helipad_metal, "Models/helipad/heli pad metal.bmp")) {
+        printf("Failed to load helipad metal texture\n");
+    }
+    
+    // Load tent texture
+    if (!loadGroundTexture(&tex_tent, "Models/tents/Tent.bmp")) {
+        printf("Failed to load tent texture\n");
+    }
+    
+    // Load tank textures
+    if (!loadGroundTexture(&tex_tank_rubber, "Models/tank/rubber.bmp")) {
+        printf("Failed to load tank rubber texture\n");
+    }
+    if (!loadGroundTexture(&tex_tank1, "Models/tank/tank1.bmp")) {
+        printf("Failed to load tank1 texture\n");
+    }
+    if (!loadGroundTexture(&tex_tank2, "Models/tank/tank2.bmp")) {
+        printf("Failed to load tank2 texture\n");
+    }
+    if (!loadGroundTexture(&tex_tank3, "Models/tank/tank3.bmp")) {
+        printf("Failed to load tank3 texture\n");
+    }
+    if (!loadGroundTexture(&tex_tank4, "Models/tank/tank4.bmp")) {
+        printf("Failed to load tank4 texture\n");
+    }
+    
+    // Load carrier texture using custom loader (handles more BMP formats)
+    printf("Loading carrier texture...\n");
+    if (loadGroundTexture(&tex_carrier, "textures/concert.bmp")) {
+        printf("Carrier texture loaded successfully! ID: %d\n", tex_carrier);
+    } else {
+        printf("Failed to load carrier texture, using fallback\n");
+        // Fallback to gray texture if loading fails
+        glGenTextures(1, &tex_carrier);
+        glBindTexture(GL_TEXTURE_2D, tex_carrier);
+        unsigned char gray[3] = { 80, 80, 85 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, gray);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+
+    // Force carrier model materials to use the loaded carrier texture
+    if (tex_carrier != 0) {
+        for (int m = 0; m < model_carrier.numMaterials; ++m) {
+            model_carrier.Materials[m].tex.texture[0] = tex_carrier;
+            model_carrier.Materials[m].textured = true;
+        }
+    }
+    
+    // Force helipad model materials to use the loaded metal texture
+    if (tex_helipad_metal != 0) {
+        for (int m = 0; m < model_helipad.numMaterials; ++m) {
+            model_helipad.Materials[m].tex.texture[0] = tex_helipad_metal;
+            model_helipad.Materials[m].textured = true;
+        }
+    }
+    
+    // Force tents model materials to use the loaded tent texture
+    if (tex_tent != 0) {
+        for (int m = 0; m < model_tents.numMaterials; ++m) {
+            model_tents.Materials[m].tex.texture[0] = tex_tent;
+            model_tents.Materials[m].textured = true;
+        }
+    }
+
+    // Force rocket model materials to use the loaded rocket texture
+    if (tex_rocket != 0) {
+        for (int m = 0; m < model_rocket.numMaterials; ++m) {
+            model_rocket.Materials[m].tex.texture[0] = tex_rocket;
+            model_rocket.Materials[m].textured = true;
+        }
+    }
+    
+    // Force tank model materials to use the loaded tank textures (fallback to gray if load failed)
+    if (tex_tank1 == 0) {
+        // Create a simple gray texture so materials are not white/untextured
+        unsigned char gray[3] = { 160, 160, 160 };
+        glGenTextures(1, &tex_tank1);
+        glBindTexture(GL_TEXTURE_2D, tex_tank1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, gray);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    if (tex_tank2 == 0) tex_tank2 = tex_tank1;
+    if (tex_tank3 == 0) tex_tank3 = tex_tank1;
+    if (tex_tank4 == 0) tex_tank4 = tex_tank1;
+    if (tex_tank_rubber == 0) tex_tank_rubber = tex_tank1;
+
+    // Apply textures using GLTexture loader to keep internal state consistent
+    const char* tankTexPaths[5] = {
+        "Models/tank/tank1.bmp",
+        "Models/tank/tank2.bmp",
+        "Models/tank/tank3.bmp",
+        "Models/tank/tank4.bmp",
+        "Models/tank/rubber.bmp"
+    };
+
+    for (int m = 0; m < model_tank.numMaterials; ++m) {
+        int slot = m % 5;
+        const char* path = tankTexPaths[slot];
+        model_tank.Materials[m].tex.Load(const_cast<char*>(path));
+        model_tank.Materials[m].textured = true;
+        model_tank.Materials[m].tex.Use();
+    }
+
+    // Ensure all tank objects are marked textured
+    for (int o = 0; o < model_tank.numObjects; ++o) {
+        model_tank.Objects[o].textured = true;
+    }
     
     // Load rings and rockets texture
-    loadBMP(&tex_rings, "textures/Tiles_G_200cm.bmp", 1);
+    if (!loadGroundTexture(&tex_rings, "textures/Tiles_G_200cm.bmp")) {
+        // Fallback to cyan texture if loading fails
+        glGenTextures(1, &tex_rings);
+        glBindTexture(GL_TEXTURE_2D, tex_rings);
+        unsigned char cyan[3] = { 0, 200, 255 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, cyan);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
     
     // Load textures
     if (!loadGroundTexture(&tex_water, "textures/water.bmp")) {
@@ -275,7 +548,7 @@ void Level1::update(float deltaTime) {
         levelCompleteTimer += deltaTime;
         if (levelCompleteTimer > 3.0f) {
             // Transition to Level 2
-            GameManager::getInstance().switchToLevel("Level2");
+            GameManager::getInstance().switchToLevel("level2");
         }
         return;
     }
@@ -647,14 +920,14 @@ void Level1::renderPortLights() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending for glow
     
-    float portX = 400.0f;
+    float portX = 450.0f;  // Updated to match new port position
     float lightY = portHeight + 5.0f;
     
     // Pulsing effect
     float pulse = 0.7f + 0.3f * sin(ringTimer * 2.0f);
     
-    // Place lights along the port edge
-    for (float z = -600.0f; z <= 600.0f; z += 100.0f) {
+    // Place lights along the expanded port edge
+    for (float z = -1400.0f; z <= 1400.0f; z += 120.0f) {
         // Light post (simple cylinder approximation)
         glColor3f(0.3f, 0.3f, 0.35f);
         glPushMatrix();
@@ -709,7 +982,19 @@ bool Level1::isOnCarrierDeck(const Vector3f& pos) {
 void Level1::render() {
     if (!active) return;
     
+    static int renderCount = 0;
+    if (renderCount < 100) {
+        printf("  Level1::render() #%d, active=%d\n", renderCount++, active);
+    }
+    
+    glClearColor(0.35f, 0.45f, 0.65f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LEQUAL);
+    glClearDepth(1.0f);
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_LIGHTING);
     
     if (flightSim) {
         glMatrixMode(GL_PROJECTION);
@@ -805,8 +1090,6 @@ void Level1::render() {
     if (showGameOver) {
         renderGameOverScreen();
     }
-    
-    glutSwapBuffers();
 }
 
 void Level1::renderWater() {
@@ -829,13 +1112,13 @@ void Level1::renderWater() {
     glBegin(GL_QUADS);
     float offset1 = timeOffset * 0.3f;
     glTexCoord2f(offset1, offset1 + waveOffset);
-    glVertex3f(-size, waterLevel - 0.5f, -size);
+    glVertex3f(-size, waterLevel - 1.0f, -size);
     glTexCoord2f(size * texScale * 2 + offset1, offset1 + waveOffset);
-    glVertex3f(size, waterLevel - 0.5f, -size);
+    glVertex3f(size, waterLevel - 1.0f, -size);
     glTexCoord2f(size * texScale * 2 + offset1, size * texScale * 2 + offset1 - waveOffset);
-    glVertex3f(size, waterLevel - 0.5f, size);
+    glVertex3f(size, waterLevel - 1.0f, size);
     glTexCoord2f(offset1, size * texScale * 2 + offset1 - waveOffset);
-    glVertex3f(-size, waterLevel - 0.5f, size);
+    glVertex3f(-size, waterLevel - 1.0f, size);
     glEnd();
     
     // Layer 2: Main water surface (medium blue, main animation)
@@ -843,13 +1126,13 @@ void Level1::renderWater() {
     glBegin(GL_QUADS);
     float offset2 = timeOffset + waveOffset;
     glTexCoord2f(offset2, -offset2 * 0.5f);
-    glVertex3f(-size, waterLevel, -size);
+    glVertex3f(-size, waterLevel - 0.2f, -size);
     glTexCoord2f(size * texScale * 2 + offset2, -offset2 * 0.5f);
-    glVertex3f(size, waterLevel, -size);
+    glVertex3f(size, waterLevel - 0.2f, -size);
     glTexCoord2f(size * texScale * 2 + offset2, size * texScale * 2 - offset2 * 0.5f);
-    glVertex3f(size, waterLevel, size);
+    glVertex3f(size, waterLevel - 0.2f, size);
     glTexCoord2f(offset2, size * texScale * 2 - offset2 * 0.5f);
-    glVertex3f(-size, waterLevel, size);
+    glVertex3f(-size, waterLevel - 0.2f, size);
     glEnd();
     
     // Layer 3: Surface highlights (lighter, faster, more transparent)
@@ -858,13 +1141,13 @@ void Level1::renderWater() {
     float offset3 = timeOffset * 1.5f - waveOffset * 2.0f;
     float texScale2 = texScale * 1.5f;  // Different scale for variety
     glTexCoord2f(-offset3, offset3 * 0.7f);
-    glVertex3f(-size, waterLevel + 0.1f, -size);
+    glVertex3f(-size, waterLevel + 0.05f, -size);
     glTexCoord2f(size * texScale2 * 2 - offset3, offset3 * 0.7f);
-    glVertex3f(size, waterLevel + 0.1f, -size);
+    glVertex3f(size, waterLevel + 0.05f, -size);
     glTexCoord2f(size * texScale2 * 2 - offset3, size * texScale2 * 2 + offset3 * 0.7f);
-    glVertex3f(size, waterLevel + 0.1f, size);
+    glVertex3f(size, waterLevel + 0.05f, size);
     glTexCoord2f(-offset3, size * texScale2 * 2 + offset3 * 0.7f);
-    glVertex3f(-size, waterLevel + 0.1f, size);
+    glVertex3f(-size, waterLevel + 0.05f, size);
     glEnd();
     
     // Foam/whitecap layer near carrier (extra detail)
@@ -888,6 +1171,65 @@ void Level1::renderWater() {
         glEnd();
     }
     
+    // Sea foam where water meets port edge and carrier (MORE PROMINENT)
+    glDisable(GL_TEXTURE_2D);
+    
+    float portX = 450.0f;
+    float foamWidth = 15.0f;  // Wider foam strip
+    float foamSize = 1500.0f;
+    
+    // Foam along port edge - brighter and more visible
+    glColor4f(1.0f, 1.0f, 1.0f, 0.85f + 0.15f * sin(ringTimer * 2.0f));
+    glBegin(GL_QUAD_STRIP);
+    for (float z = -foamSize; z <= foamSize; z += 40.0f) {
+        float wave = sin(z * 0.01f + ringTimer) * 2.5f;
+        glVertex3f(portX + wave, waterLevel + 0.4f, z);
+        glVertex3f(portX + foamWidth + wave, waterLevel + 0.4f, z);
+    }
+    glEnd();
+    
+    // Additional inner foam layer for more visibility
+    glColor4f(0.95f, 0.98f, 1.0f, 0.6f + 0.3f * sin(ringTimer * 3.0f));
+    glBegin(GL_QUAD_STRIP);
+    for (float z = -foamSize; z <= foamSize; z += 40.0f) {
+        float wave = sin(z * 0.015f + ringTimer * 1.5f) * 2.0f;
+        glVertex3f(portX + foamWidth + wave, waterLevel + 0.45f, z);
+        glVertex3f(portX + foamWidth * 2.0f + wave, waterLevel + 0.45f, z);
+    }
+    glEnd();
+    
+    // Foam around carrier (circular pattern) - more prominent
+    Vector3f carrierCenter = carrierPosition;
+    float carrierRadius = 30.0f;
+    
+    // Outer foam ring
+    glBegin(GL_TRIANGLE_FAN);
+    glColor4f(1.0f, 1.0f, 1.0f, 0.9f);
+    glVertex3f(carrierCenter.x, waterLevel + 0.4f, carrierCenter.z);
+    for (int i = 0; i <= 32; i++) {
+        float angle = (float)i / 32.0f * 6.28318f;
+        float wave = sin(angle * 3.0f + ringTimer * 2.0f) * 3.0f;
+        float x = carrierCenter.x + cos(angle) * (carrierRadius + wave);
+        float z = carrierCenter.z + sin(angle) * (carrierRadius + wave);
+        glColor4f(1.0f, 1.0f, 1.0f, 0.75f + 0.15f * sin(angle * 2.0f + ringTimer));
+        glVertex3f(x, waterLevel + 0.4f, z);
+    }
+    glEnd();
+    
+    // Inner foam ring for carrier
+    glBegin(GL_TRIANGLE_FAN);
+    glColor4f(0.95f, 0.98f, 1.0f, 0.8f);
+    glVertex3f(carrierCenter.x, waterLevel + 0.45f, carrierCenter.z);
+    for (int i = 0; i <= 32; i++) {
+        float angle = (float)i / 32.0f * 6.28318f;
+        float wave = sin(angle * 4.0f + ringTimer * 2.5f) * 2.0f;
+        float x = carrierCenter.x + cos(angle) * (carrierRadius + 10.0f + wave);
+        float z = carrierCenter.z + sin(angle) * (carrierRadius + 10.0f + wave);
+        glColor4f(0.95f, 0.98f, 1.0f, 0.6f + 0.2f * sin(angle * 3.0f + ringTimer * 1.5f));
+        glVertex3f(x, waterLevel + 0.45f, z);
+    }
+    glEnd();
+    
     glDisable(GL_BLEND);
     glEnable(GL_LIGHTING);
 }
@@ -897,54 +1239,446 @@ void Level1::renderPort() {
     glBindTexture(GL_TEXTURE_2D, tex_concrete);
     glDisable(GL_LIGHTING);
     
-    float size = 800.0f;
-    float portX = 400.0f;  // Port is on the right side
+    // Make port much larger and more extensive
+    float size = 1500.0f;  // Doubled from 800 to 1500
+    float portX = 450.0f;  // Moved slightly further right
+    float portDepth = 600.0f;  // How far the port extends
     
-    // Port/dock platform (concrete)
+    // Main port concrete area - larger perimeter
     glColor3f(0.6f, 0.6f, 0.65f);
     glBegin(GL_QUADS);
     float texScale = 0.01f;
     
-    // Main port concrete area
     glTexCoord2f(0, 0);
     glVertex3f(portX, portHeight, -size);
-    glTexCoord2f(size * texScale, 0);
-    glVertex3f(portX + size, portHeight, -size);
-    glTexCoord2f(size * texScale, size * texScale * 2);
-    glVertex3f(portX + size, portHeight, size);
+    glTexCoord2f(portDepth * texScale, 0);
+    glVertex3f(portX + portDepth, portHeight, -size);
+    glTexCoord2f(portDepth * texScale, size * texScale * 2);
+    glVertex3f(portX + portDepth, portHeight, size);
     glTexCoord2f(0, size * texScale * 2);
     glVertex3f(portX, portHeight, size);
     glEnd();
     
-    // Port edge wall (between water and port)
-    glColor3f(0.4f, 0.4f, 0.45f);
+    // Port edge wall (between water and port) - taller and more defined
+    glColor3f(0.35f, 0.35f, 0.4f);
     glBegin(GL_QUADS);
     glVertex3f(portX, waterLevel, -size);
-    glVertex3f(portX, portHeight, -size);
-    glVertex3f(portX, portHeight, size);
+    glVertex3f(portX, portHeight + 2.0f, -size);
+    glVertex3f(portX, portHeight + 2.0f, size);
     glVertex3f(portX, waterLevel, size);
     glEnd();
     
+    // Add concrete pylons/pillars along the edge
+    glDisable(GL_TEXTURE_2D);
+    glColor3f(0.4f, 0.4f, 0.45f);
+    for (float z = -size + 50.0f; z < size; z += 100.0f) {
+        glPushMatrix();
+        glTranslatef(portX, waterLevel + (portHeight - waterLevel) / 2, z);
+        glScalef(8.0f, portHeight - waterLevel + 2.0f, 8.0f);
+        glutSolidCube(1.0f);
+        glPopMatrix();
+    }
+    
     glEnable(GL_LIGHTING);
+    
+    // Render port cranes at strategic positions
+    glPushMatrix();
+    glColor3f(0.8f, 0.7f, 0.1f);  // Yellow crane color
+    
+    // Crane 1 - Near front of port
+    glPushMatrix();
+    glTranslatef(portX + 19.0f, portHeight, -400.0f);
+    //glRotatef(45.0f, 0, 1, 0);
+    glScalef(0.0015f, 0.0015f, 0.0015f);
+    model_crane.Draw();
+    glPopMatrix();
+    
+    // Crane 2 - Middle section
+    glPushMatrix();
+    glTranslatef(portX + 19.0f, portHeight, 0.0f);
+    //glRotatef(-30.0f, 0, 1, 0);
+    glScalef(0.0015f, 0.0015f, 0.0015f);
+    model_crane.Draw();
+    glPopMatrix();
+    
+    // Crane 3 - Back section
+    glPushMatrix();
+    glTranslatef(portX + 19.0f, portHeight, 450.0f);
+    glRotatef(90.0f, 0, 1, 0);
+    glScalef(0.0015f, 0.0015f, 0.0015f);
+    model_crane.Draw();
+    glPopMatrix();
+    
+    glPopMatrix();
+    
+    // Render shipping containers in organized stacks
+    glPushMatrix();
+    
+    // Container yard 1 - organized rows
+    float containerBaseX = portX + 300.0f;
+    float containerBaseZ = -600.0f;
+    
+    // Define fixed stack heights per position (no randomness to avoid floating)
+    int stackHeights1[4][6] = {
+        {2, 3, 2, 1, 2, 3},
+        {1, 2, 3, 2, 1, 2},
+        {3, 1, 2, 3, 2, 1},
+        {2, 2, 1, 2, 3, 2}
+    };
+    
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 6; col++) {
+            int stackHeight = stackHeights1[row][col];
+            
+            for (int height = 0; height < stackHeight; height++) {
+                glPushMatrix();
+                glTranslatef(
+                    containerBaseX + row * 35.0f,
+                    portHeight + 0.5f + height * 7.5f,  // Lower to ground level
+                    containerBaseZ + col * 40.0f
+                );
+                glRotatef(90.0f * (row % 2), 0, 1, 0);  // Alternate rotation
+                
+                // Draw textured box instead of 3DS model to ensure textures work
+                glEnable(GL_TEXTURE_2D);
+                
+                // Select texture based on color variation
+                if ((row + col + height) % 3 == 0)
+                    glBindTexture(GL_TEXTURE_2D, tex_container_red);
+                else if ((row + col + height) % 3 == 1)
+                    glBindTexture(GL_TEXTURE_2D, tex_container_blue);
+                else
+                    glBindTexture(GL_TEXTURE_2D, tex_container_yellow);
+                
+                // Draw shipping container as textured box (20ft container proportions)
+                float containerLength = 2*9.0f;
+                float containerWidth = 2*3.6f;
+                float containerHeight = 2*3.9f;
+                
+                glBegin(GL_QUADS);
+                glColor3f(1.0f, 1.0f, 1.0f);
+                
+                // Front face
+                glNormal3f(0.0f, 0.0f, 1.0f);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, containerWidth/2);
+                
+                // Back face
+                glNormal3f(0.0f, 0.0f, -1.0f);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, -containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, -containerWidth/2);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, -containerWidth/2);
+                
+                // Left face
+                glNormal3f(-1.0f, 0.0f, 0.0f);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, -containerWidth/2);
+                
+                // Right face
+                glNormal3f(1.0f, 0.0f, 0.0f);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, -containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, containerWidth/2);
+                
+                // Top face
+                glNormal3f(0.0f, 1.0f, 0.0f);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(-containerLength/2, containerHeight, containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(containerLength/2, containerHeight, containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, -containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, -containerWidth/2);
+                
+                // Bottom face
+                glNormal3f(0.0f, -1.0f, 0.0f);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(-containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(containerLength/2, 0.0f, containerWidth/2);
+                
+                glEnd();
+                glDisable(GL_TEXTURE_2D);
+                glPopMatrix();
+            }
+        }
+    }
+    
+    // Container yard 2 - second area
+    containerBaseZ = 200.0f;
+    int stackHeights2[3][5] = {
+        {2, 1, 2, 1, 2},
+        {1, 2, 1, 2, 1},
+        {2, 1, 2, 2, 1}
+    };
+    
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < 5; col++) {
+            int stackHeight = stackHeights2[row][col];
+            
+            for (int height = 0; height < stackHeight; height++) {
+                glPushMatrix();
+                glTranslatef(
+                    containerBaseX + row * 35.0f,
+                    portHeight + 0.5f + height * 7.5f,  // Lower to ground level
+                    containerBaseZ + col * 40.0f
+                );
+                glRotatef(90.0f * ((row + 1) % 2), 0, 1, 0);
+                
+                // Draw textured box instead of 3DS model to ensure textures work
+                glEnable(GL_TEXTURE_2D);
+                
+                // Select texture based on color variation
+                if ((row + col + height) % 3 == 0)
+                    glBindTexture(GL_TEXTURE_2D, tex_container_yellow);
+                else if ((row + col + height) % 3 == 1)
+                    glBindTexture(GL_TEXTURE_2D, tex_container_red);
+                else
+                    glBindTexture(GL_TEXTURE_2D, tex_container_blue);
+                
+                // Draw shipping container as textured box (20ft container proportions)
+                float containerLength = 2*9.0f;
+                float containerWidth = 2*3.6f;
+                float containerHeight = 2*3.9f;
+                
+                glBegin(GL_QUADS);
+                glColor3f(1.0f, 1.0f, 1.0f);
+                
+                // Front face
+                glNormal3f(0.0f, 0.0f, 1.0f);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, containerWidth/2);
+                
+                // Back face
+                glNormal3f(0.0f, 0.0f, -1.0f);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, -containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, -containerWidth/2);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, -containerWidth/2);
+                
+                // Left face
+                glNormal3f(-1.0f, 0.0f, 0.0f);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, -containerWidth/2);
+                
+                // Right face
+                glNormal3f(1.0f, 0.0f, 0.0f);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, -containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, containerWidth/2);
+                
+                // Top face
+                glNormal3f(0.0f, 1.0f, 0.0f);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(-containerLength/2, containerHeight, containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(containerLength/2, containerHeight, containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(containerLength/2, containerHeight, -containerWidth/2);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(-containerLength/2, containerHeight, -containerWidth/2);
+                
+                // Bottom face
+                glNormal3f(0.0f, -1.0f, 0.0f);
+                glTexCoord2f(0.0f, 1.0f); glVertex3f(-containerLength/2, 0.0f, containerWidth/2);
+                glTexCoord2f(0.0f, 0.0f); glVertex3f(-containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 0.0f); glVertex3f(containerLength/2, 0.0f, -containerWidth/2);
+                glTexCoord2f(1.0f, 1.0f); glVertex3f(containerLength/2, 0.0f, containerWidth/2);
+                
+                glEnd();
+                glDisable(GL_TEXTURE_2D);
+                glPopMatrix();
+            }
+        }
+    }
+    
+    glPopMatrix();
+    
+    // Render helipad on the port
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 150.0f, portHeight + 0.1f, -700.0f);
+    glRotatef(-90.0f, 0, 1, 0);
+    glScalef(0.8f, 0.8f, 0.8f);  // Increased from 0.5f
+    model_helipad.Draw();
+    glPopMatrix();
+    
+    // Render tents near the port edge
+    // Tent 1
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 100.0f, portHeight + 0.1f, -200.0f);
+    glRotatef(180.0f, 0, 1, 0);
+    glScalef(3.0f, 3.0f, 3.0f);  // Increased from 2.0f
+    model_tents.Draw();
+    glPopMatrix();
+    
+    // Tent 2
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 100.0f, portHeight + 0.1f, 100.0f);
+    glRotatef(180.0f, 0, 1, 0);
+    glScalef(3.0f, 3.0f, 3.0f);  // Increased from 2.0f
+    model_tents.Draw();
+    glPopMatrix();
+    
+    // Tent 3
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 100.0f, portHeight + 0.1f, 400.0f);
+    glRotatef(180.0f, 0, 1, 0);
+    glScalef(3.0f, 3.0f, 3.0f);  // Increased from 2.0f
+    model_tents.Draw();
+    glPopMatrix();
+    
+    // Render tanks on the port
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_LIGHTING);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    // Tank 1
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 250.0f, portHeight + 0.1f, -500.0f);
+    glRotatef(45.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_tank.Draw();
+    glPopMatrix();
+    
+    // Tank 2
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 250.0f, portHeight + 0.1f, 0.0f);
+    glRotatef(-30.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_tank.Draw();
+    glPopMatrix();
+    
+    // Tank 3
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 250.0f, portHeight + 0.1f, 500.0f);
+    glRotatef(90.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_tank.Draw();
+    glPopMatrix();
+    
+    // Render trucks on the port
+    // Truck 1
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 200.0f, portHeight + 0.1f, -300.0f);
+    glRotatef(0.0f, 0, 1, 0);
+    glScalef(0.1f, 0.1f, 0.1f);
+    model_truck.Draw();
+    glPopMatrix();
+    
+    // Truck 2
+    glPushMatrix();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glTranslatef(portX + 200.0f, portHeight + 0.1f, 200.0f);
+    glRotatef(180.0f, 0, 1, 0);
+    glScalef(0.1f, 0.1f, 0.1f);
+    model_truck.Draw();
+    glPopMatrix();
+
+    // Leave texture/lighting state enabled for subsequent textured objects
 }
 
 void Level1::renderCarrier() {
+    // 1. Draw the Model (Scaled)
     glPushMatrix();
-    
     glTranslatef(carrierPosition.x, carrierPosition.y, carrierPosition.z);
     glRotatef(carrierRotation, 0, 1, 0);
     glScalef(carrierScale, carrierScale, carrierScale);
     
-    // Apply asphalt texture to carrier
+    glColor3f(0.5f, 0.5f, 0.55f);
+    model_carrier.Draw();
+    glPopMatrix();
+    
+    // 2. Draw the Deck Primitive (Unscaled, World Units)
+    glPushMatrix();
+    glTranslatef(carrierPosition.x, carrierPosition.y + 3.0f, carrierPosition.z); // +3.0f height
+    glRotatef(carrierRotation, 0, 1, 0);
+    
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex_carrier);
-    glColor3f(1.0f, 1.0f, 1.0f);  // White to show texture as-is
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     
-    // Draw the carrier model
-    model_carrier.Draw();
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_LIGHTING);
     
+    // Draw textured deck surface (Runway style)
+    float deckWidth = 25.0f;
+    float deckLength = 120.0f;
+    
+    // Main deck surface
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f); glVertex3f(-deckWidth, 0.0f, -deckLength);
+    glTexCoord2f(1.0f, 0.0f); glVertex3f(deckWidth, 0.0f, -deckLength);
+    glTexCoord2f(1.0f, 5.0f); glVertex3f(deckWidth, 0.0f, deckLength);
+    glTexCoord2f(0.0f, 5.0f); glVertex3f(-deckWidth, 0.0f, deckLength);
+    glEnd();
+    
+    // Markings (White lines)
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    
+    // Centerline dashes
+    float dashLength = 10.0f;
+    float dashGap = 10.0f;
+    float dashWidth = 1.0f;
+    
+    for (float z = -deckLength + 10.0f; z < deckLength - 10.0f; z += (dashLength + dashGap)) {
+        glBegin(GL_QUADS);
+        glVertex3f(-dashWidth/2, 0.1f, z);
+        glVertex3f(dashWidth/2, 0.1f, z);
+        glVertex3f(dashWidth/2, 0.1f, z + dashLength);
+        glVertex3f(-dashWidth/2, 0.1f, z + dashLength);
+        glEnd();
+    }
+    
+    // Edge lines
+    float edgeWidth = 1.0f;
+    float edgeOffset = deckWidth - 2.0f;
+    
+    // Left edge
+    glBegin(GL_QUADS);
+    glVertex3f(-edgeOffset - edgeWidth, 0.1f, -deckLength);
+    glVertex3f(-edgeOffset, 0.1f, -deckLength);
+    glVertex3f(-edgeOffset, 0.1f, deckLength);
+    glVertex3f(-edgeOffset - edgeWidth, 0.1f, deckLength);
+    glEnd();
+    
+    // Right edge
+    glBegin(GL_QUADS);
+    glVertex3f(edgeOffset, 0.1f, -deckLength);
+    glVertex3f(edgeOffset + edgeWidth, 0.1f, -deckLength);
+    glVertex3f(edgeOffset + edgeWidth, 0.1f, deckLength);
+    glVertex3f(edgeOffset, 0.1f, deckLength);
+    glEnd();
+    
+    glEnable(GL_LIGHTING);
+    glDisable(GL_BLEND);
     glPopMatrix();
 }
+    // glTranslatef... glRotatef...
+    // glPushMatrix(); // Save unscaled
+    // glScalef...
+    // model.Draw();
+    // glPopMatrix(); // Restore unscaled
+    // ... primitive ...
+    // glPopMatrix(); // Restore original
+    
+    // This is cleaner.
+    
+    // Let's find the start of renderCarrier.
+
 
 void Level1::renderRings() {
     for (const auto& ring : rings) {
@@ -1073,9 +1807,7 @@ void Level1::renderToolkits() {
 }
 
 void Level1::renderRockets() {
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, tex_rings);
-    glDisable(GL_LIGHTING);
+    glEnable(GL_LIGHTING);
     
     for (const auto& rocket : rockets) {
         if (!rocket.active) continue;
@@ -1090,66 +1822,116 @@ void Level1::renderRockets() {
         
         glRotatef(yaw, 0, 1, 0);
         glRotatef(pitch, 1, 0, 0);
+
+        // Align model forward (3ds likely +X) to world +Z (direction of travel)
+        glRotatef(-90.0f, 0, 1, 0);
         
-        // Rocket body (red/orange)
-        glColor3f(0.8f, 0.2f, 0.1f);
-        glPushMatrix();
-        glScalef(0.5f, 0.5f, 2.0f);
-        glutSolidCube(2.0f);
+        // Render 3D rocket model
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glScalef(0.25f, 0.25f, 0.25f);
+        if (tex_rocket != 0) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, tex_rocket);
+        }
+        model_rocket.Draw();
+        
         glPopMatrix();
         
-        // Rocket nose cone
-        glColor3f(0.3f, 0.3f, 0.3f);
-        glPushMatrix();
-        glTranslatef(0, 0, 2.0f);
-        glRotatef(-90, 1, 0, 0);
-        glutSolidCone(0.5f, 1.5f, 8, 4);
-        glPopMatrix();
-        
-        // Rocket exhaust flame
+        // Render smoke trail behind rocket
+        glDisable(GL_LIGHTING);
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-        glColor4f(1.0f, 0.6f, 0.1f, 0.8f);
-        glPushMatrix();
-        glTranslatef(0, 0, -2.5f);
-        glRotatef(90, 1, 0, 0);
-        glutSolidCone(0.6f, 2.0f, 8, 4);
-        glPopMatrix();
-        glDisable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_TEXTURE_2D);
         
-        glPopMatrix();
+        // Create smoke particles trailing behind the rocket
+        Vector3f smokeOffset = dir * -4.5f;  // Offset behind rocket (further back)
+        for (int i = 0; i < 5; i++) {
+            float offset = (float)i * 0.8f;
+            Vector3f smokePos = rocket.position + smokeOffset * offset;
+            
+            glPushMatrix();
+            glTranslatef(smokePos.x, smokePos.y, smokePos.z);
+            
+            // Face the camera
+            glRotatef(-yaw, 0, 1, 0);
+            glRotatef(-pitch, 1, 0, 0);
+            
+            // Smoke color - gets lighter and more transparent with distance
+            float alpha = 0.5f - (float)i * 0.08f;
+            float size = 1.0f + (float)i * 0.3f;
+            glColor4f(0.6f, 0.6f, 0.6f, alpha);
+            
+            // Draw smoke particle as a quad
+            glBegin(GL_QUADS);
+            glVertex3f(-size, -size, 0);
+            glVertex3f(size, -size, 0);
+            glVertex3f(size, size, 0);
+            glVertex3f(-size, size, 0);
+            glEnd();
+            
+            glPopMatrix();
+        }
+        
+        glDisable(GL_BLEND);
+        glEnable(GL_LIGHTING);
     }
-    
-    glEnable(GL_LIGHTING);
 }
 
 void Level1::renderShadows() {
     if (!flightSim) return;
     
-    // Simple blob shadow under plane
-    Vector3f planePos = flightSim->player.position;
-    float shadowY = 0.1f;  // Just above ground/water
-    
-    if (planePos.y < 100.0f) {
-        float shadowScale = 1.0f - (planePos.y / 100.0f) * 0.5f;
-        float shadowAlpha = 0.3f * shadowScale;
-        
-        glPushMatrix();
-        glTranslatef(planePos.x, shadowY, planePos.z);
-        glScalef(4.0f * shadowScale, 0.1f, 6.0f * shadowScale);
-        
-        glDisable(GL_LIGHTING);
-        glDisable(GL_TEXTURE_2D);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glColor4f(0, 0, 0, shadowAlpha);
-        
-        glutSolidSphere(1.0f, 12, 6);
-        
-        glDisable(GL_BLEND);
-        glEnable(GL_LIGHTING);
-        glPopMatrix();
+    // Render plane shadow (oval shaped, follows plane orientation)
+    float planeHeight = flightSim->player.position.y;
+    if (planeHeight < 150.0f) {  // Only render shadow if plane is not too high
+        shadowSystem.renderOvalShadow(
+            flightSim->player.position,
+            flightSim->player.forward,
+            8.0f,   // Length (plane is longer than wide)
+            4.0f,   // Width
+            planeHeight,
+            150.0f  // Max height for visible shadow
+        );
     }
+    
+    // Render shadows for rings
+    for (size_t i = 0; i < rings.size(); i++) {
+        if (rings[i].passed) continue;
+        
+        Vector3f ringPos = rings[i].position;
+        float height = ringPos.y;
+        
+        shadowSystem.renderBlobShadow(ringPos, rings[i].radius * 0.5f, height, 120.0f);
+    }
+    
+    // Render shadows for toolkits
+    for (size_t i = 0; i < toolkits.size(); i++) {
+        if (toolkits[i].collected) continue;
+        
+        float bobHeight = sin(toolkits[i].bobOffset) * 3.0f;
+        Vector3f toolkitPos = toolkits[i].position;
+        float height = toolkitPos.y + bobHeight;
+        
+        shadowSystem.renderBlobShadow(toolkitPos, 2.5f, height, 120.0f);
+    }
+    
+    // Render shadows for rockets
+    for (size_t i = 0; i < rockets.size(); i++) {
+        if (!rockets[i].active) continue;
+        
+        Vector3f rocketPos = rockets[i].position;
+        float height = rocketPos.y;
+        
+        shadowSystem.renderBlobShadow(rocketPos, 2.0f, height, 100.0f);
+    }
+    
+    // Render ambient occlusion at carrier base
+    shadowSystem.renderBaseAO(carrierPosition, 50.0f, 0.4f);
+    
+    // Render ambient occlusion at crane bases
+    float portX = 450.0f;
+    shadowSystem.renderBaseAO(Vector3f(portX + 19.0f, portHeight, -400.0f), 15.0f, 0.35f);
+    shadowSystem.renderBaseAO(Vector3f(portX + 19.0f, portHeight, 0.0f), 15.0f, 0.35f);
+    shadowSystem.renderBaseAO(Vector3f(portX + 19.0f, portHeight, 450.0f), 15.0f, 0.35f);
 }
 
 void Level1::renderHUD() {
@@ -1694,7 +2476,17 @@ void Level1::onEnter() {
     // Reset spawn protection when entering/re-entering level
     spawnProtectionTimer = 3.0f;
     hasSpawnProtection = true;
+    
+    // Reload plane model based on current selection
     if (flightSim) {
+        int selectedPlane = PlaneSelectionLevel::getSelectedPlane();
+        printf("Level1 loading plane %d on enter\n", selectedPlane);
+        flightSim->modelLoaded = false;  // allow reload
+        if (selectedPlane == 1) {
+            flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
+        } else {
+            flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
+        }
         flightSim->isCrashed = false;
     }
 }

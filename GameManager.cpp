@@ -1,5 +1,6 @@
 #include "GameManager.h"
 #include <iostream>
+#include <glut.h>
 
 GameManager::GameManager() : currentLevel(nullptr), currentLevelName("") {
 }
@@ -37,10 +38,11 @@ void GameManager::switchToLevel(const std::string& name) {
         return;
     }
     
-    // Exit current level
+    // Exit current level and ENSURE it's deactivated
     if (currentLevel != nullptr) {
         std::cout << "Exiting level: " << currentLevelName << std::endl;
         currentLevel->onExit();
+        printf("Old level deactivated: %d\n", currentLevel->isActive());
     }
     
     // Switch to new level
@@ -51,6 +53,7 @@ void GameManager::switchToLevel(const std::string& name) {
     
     // Initialize if not already initialized
     currentLevel->onEnter();
+    printf("New level activated: %d\n", currentLevel->isActive());
     
     std::cout << "Level '" << name << "' loaded successfully." << std::endl;
 }
@@ -106,8 +109,25 @@ void GameManager::update(float deltaTime) {
 }
 
 void GameManager::render() {
+    static int frameCount = 0;
+    // Reset counter on level switch for continuous debugging
+    static std::string lastLevelName = "";
+    if (currentLevelName != lastLevelName) {
+        frameCount = 0;
+        lastLevelName = currentLevelName;
+    }
+    
+    if (frameCount < 100) {  // Extended debug
+        printf("GM::render() frame %d, currLevel=%s, ptr=%p, active=%d\n", 
+               frameCount++, currentLevelName.c_str(), currentLevel, 
+               currentLevel ? currentLevel->isActive() : -1);
+    }
     if (currentLevel && currentLevel->isActive()) {
         currentLevel->render();
+    } else {
+        if (frameCount < 100) {
+            printf("  -> SKIP render (no active level)\n");
+        }
     }
 }
 

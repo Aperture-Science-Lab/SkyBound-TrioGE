@@ -41,10 +41,18 @@ void loadBMP(GLuint *textureID, char *strFileName, int wrap) {
 
 	fopen_s(&pFile, strFileName, "r");
 	if (pFile) {
+		fclose(pFile);
 		pBitmap = auxDIBImageLoadA(strFileName);
 	}
 	else {
 		MessageBoxA(NULL, "Texture file not found!", "Error!", MB_OK);
+		exit(EXIT_FAILURE);
+	}
+
+	if (!pBitmap) {
+		char errorMsg[512];
+		sprintf_s(errorMsg, sizeof(errorMsg), "Failed to load texture: %s\nThe BMP format may be incompatible.", strFileName);
+		MessageBoxA(NULL, errorMsg, "Texture Loading Error!", MB_OK);
 		exit(EXIT_FAILURE);
 	}
 
