@@ -63,6 +63,7 @@ private:
     GLTexture tex_ground;
     GLuint tex_runway;              // Runway texture
     GLuint tex_grass;               // Grass billboard texture
+    GLuint tex_fuelContainer;       // Fuel container texture
     
     // Optimized Billboard Grass System (no 3D models - much faster)
     static const int GRASS_GRID_SIZE = 12;      // Grid cells around player (reduced)

@@ -113,7 +113,7 @@ Level1::Level1() : Level(), flightSim(nullptr), screenWidth(1280), screenHeight(
     collectedCount(0), collectableTimer(0.0f), ringsPassedCount(0), totalRings(10),
     ringTimer(0.0f), gameTimer(0.0f), maxGameTime(600.0f), score(0),
     gameOver(false), showGameOver(false), levelComplete(false), showLevelComplete(false),
-    levelCompleteTimer(0.0f), tex_water(0), tex_concrete(0),
+    levelCompleteTimer(0.0f), tex_water(0), tex_concrete(0), tex_carrier(0), tex_rings(0),
     rocketSpawnTimer(0.0f), rocketSpawnInterval(5.0f),
     waterLevel(-2.0f), portHeight(3.0f),
     spawnProtectionTimer(3.0f), hasSpawnProtection(true) {
@@ -170,6 +170,12 @@ void Level1::loadAssets() {
     
     // Load wrench/toolkit model
     model_wrench.Load("Models/wrench/wrench.3ds");
+    
+    // Load carrier texture
+    loadBMP(&tex_carrier, "models/carrier/Asphalt_A01_100cm.bmp", 1);
+    
+    // Load rings and rockets texture
+    loadBMP(&tex_rings, "textures/Tiles_G_200cm.bmp", 1);
     
     // Load textures
     if (!loadGroundTexture(&tex_water, "textures/water.bmp")) {
@@ -854,10 +860,10 @@ void Level1::renderCarrier() {
     glRotatef(carrierRotation, 0, 1, 0);
     glScalef(carrierScale, carrierScale, carrierScale);
     
-    // Apply gray concrete-like color to carrier
+    // Apply asphalt texture to carrier
     glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, tex_concrete);
-    glColor3f(0.5f, 0.5f, 0.55f);  // Gray color
+    glBindTexture(GL_TEXTURE_2D, tex_carrier);
+    glColor3f(1.0f, 1.0f, 1.0f);  // White to show texture as-is
     
     // Draw the carrier model
     model_carrier.Draw();
@@ -876,7 +882,8 @@ void Level1::renderRing(const Ring& ring) {
     glTranslatef(ring.position.x, ring.position.y, ring.position.z);
     glRotatef(ring.rotationAngle, 0, 0, 1);  // Rotate around forward axis
     
-    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex_rings);
     glDisable(GL_LIGHTING);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -967,7 +974,8 @@ void Level1::renderToolkits() {
 }
 
 void Level1::renderRockets() {
-    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex_rings);
     glDisable(GL_LIGHTING);
     
     for (const auto& rocket : rockets) {

@@ -66,6 +66,8 @@ private:
     // Textures
     GLuint tex_water;               // Water texture
     GLuint tex_concrete;            // Port concrete texture
+    GLuint tex_carrier;             // Carrier deck texture
+    GLuint tex_rings;               // Rings and rockets texture
     
     // Particle Effects System
     ParticleEffects particleEffects;

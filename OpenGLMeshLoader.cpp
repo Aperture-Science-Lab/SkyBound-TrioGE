@@ -177,7 +177,7 @@ int main(int argc, char** argv)
     // Initialize and switch to Level 1 (Carrier Mission)
     carrierLevel->init();
     flightLevel->init();
-    GameManager::getInstance().switchToLevel("CarrierMission");
+    GameManager::getInstance().switchToLevel("FlightSimulator");
     
     lastTime = glutGet(GLUT_ELAPSED_TIME);
 

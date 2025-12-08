@@ -171,6 +171,9 @@ void Level2::loadAssets() {
     model_tree.Load("Models/tree/Tree1.3ds");
     model_fuelContainer.Load("Models/fuel container/Container Gas  N250815.3DS");
     
+    // Load fuel container texture
+    loadBMP(&tex_fuelContainer, "models/fuel container/MetalBase0084_M.bmp", 1);
+    
     // Create simple green grass texture (procedural)
     glGenTextures(1, &tex_grass);
     glBindTexture(GL_TEXTURE_2D, tex_grass);
@@ -784,6 +787,10 @@ void Level2::renderFuelContainers() {
         
         // Scale the model appropriately (smaller size)
         glScalef(0.02f, 0.02f, 0.02f);
+        
+        // Enable texturing and bind fuel container texture
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, tex_fuelContainer);
         
         // Glow effect using emission
         float glowColor[] = { 0.2f * fc.glowIntensity, 0.8f * fc.glowIntensity, 0.2f * fc.glowIntensity, 1.0f };
