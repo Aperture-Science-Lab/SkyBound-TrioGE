@@ -5,6 +5,7 @@
 #include "GLTexture.h"
 #include "GameManager.h"
 #include "PlaneSelectionLevel.h"
+#include "OptionsMenu.h"
 #include "Level1.h"
 #include "Level2.h"
 #include <Vector3f.h>
@@ -194,15 +195,18 @@ int main(int argc, char** argv)
     PlaneSelectionLevel* planeSelectLevel = new PlaneSelectionLevel();
     Level1* carrierLevel = new Level1();
     Level2* flightLevel = new Level2();
+    OptionsMenu* optionsMenu = new OptionsMenu();
     
     GameManager::getInstance().registerLevel("planeselect", planeSelectLevel);
     GameManager::getInstance().registerLevel("level1", carrierLevel);
     GameManager::getInstance().registerLevel("level2", flightLevel);
+    GameManager::getInstance().registerLevel("options", optionsMenu);
     
     // Initialize all levels
     planeSelectLevel->init();
     carrierLevel->init();
     flightLevel->init();
+    optionsMenu->init();
     
     // Start with plane selection screen
     GameManager::getInstance().switchToLevel("planeselect");

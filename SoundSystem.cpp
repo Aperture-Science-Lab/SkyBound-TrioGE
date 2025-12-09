@@ -1,6 +1,16 @@
 #include "SoundSystem.h"
 #include <stdio.h>
 #include <direct.h>
+#include <iostream>
+
+// Helper to log MCI errors
+void logMCIError(MCIERROR err) {
+    if (err != 0) {
+        char buffer[256];
+        mciGetErrorStringA(err, buffer, 256);
+        printf("MCI Error: %s\n", buffer);
+    }
+}
 
 SoundSystem::SoundSystem() 
     : currentSound(PlaneSound::NONE), previousSound(PlaneSound::NONE), 
@@ -12,80 +22,89 @@ SoundSystem::~SoundSystem() {
 }
 
 std::string SoundSystem::getFullPath(const char* filename) {
-    // If basePath is set, use it
     if (!basePath.empty()) {
-        return basePath + "\\" + filename;
+        std::string longPath = basePath + "\\" + filename;
+        // Convert to short path to avoid space issues with MCI
+        char shortPath[MAX_PATH];
+        DWORD result = GetShortPathNameA(longPath.c_str(), shortPath, MAX_PATH);
+        if (result == 0) {
+            // Failed (file might not exist yet?), return quoted long path
+            return std::string("\"") + longPath + "\"";
+        }
+        return std::string(shortPath);
     }
-    
-    // Otherwise return relative path
     return std::string(filename);
 }
 
 void SoundSystem::playLoopingSound(const char* filename) {
+    mciSendString("close engine", NULL, 0, NULL);
+
     std::string fullPath = getFullPath(filename);
-    PlaySoundA(fullPath.c_str(), NULL, SND_FILENAME | SND_ASYNC | SND_LOOP | SND_NODEFAULT);
+    // Use mpegvideo for better compatibility, and ensure surrounding quotes (getFullPath handles internal if needed, but safe to double quote in MCI? No, be careful)
+    // Actually getFullPath returns either short path (no spaces) OR quoted long path.
+    // So we just use it.
+    std::string command = "open " + fullPath + " type mpegvideo alias engine";
+    
+    // Explicit error checking
+    MCIERROR err = mciSendString(command.c_str(), NULL, 0, NULL);
+    if (err) {
+        printf("Failed to open engine sound: %s\n", command.c_str());
+        logMCIError(err);
+    } else {
+        mciSendString("play engine repeat", NULL, 0, NULL);
+    }
 }
 
 void SoundSystem::init() {
     if (initialized) return;
     
-    // Try to determine absolute path to sound folder
     char cwd[MAX_PATH];
     if (_getcwd(cwd, MAX_PATH)) {
         std::string cwdStr(cwd);
-        
-        // Check if sound folder exists in current directory
         std::string testPath1 = cwdStr + "\\sound";
-        std::string testPath2 = cwdStr + "\\..\\sound";
-        
-        // Test which path works by checking if a known file exists
-        std::string testFile1 = testPath1 + "\\coin.wav";
-        std::string testFile2 = testPath2 + "\\coin.wav";
         
         FILE* f = nullptr;
-        if (fopen_s(&f, testFile1.c_str(), "rb") == 0 && f) {
+        std::string testFile = testPath1 + "\\coin.wav";
+        
+        if (fopen_s(&f, testFile.c_str(), "rb") == 0 && f) {
             fclose(f);
             basePath = testPath1;
-        } else if (fopen_s(&f, testFile2.c_str(), "rb") == 0 && f) {
-            fclose(f);
-            basePath = testPath2;
         } else {
-            // Fallback: try hardcoded project path
-            basePath = "C:\\Users\\Victus\\Documents\\Sky-bound\\sound";
+            // Try standard location if not found in cwd
+            basePath = "C:\\Users\\Victus\\Documents\\v2\\Sky-bound\\sound";
         }
     } else {
-        // Fallback to hardcoded path
-        basePath = "C:\\Users\\Victus\\Documents\\Sky-bound\\sound";
+        basePath = "C:\\Users\\Victus\\Documents\\v2\\Sky-bound\\sound";
     }
     
+    printf("SoundSystem initialized. BasePath: %s\n", basePath.c_str());
+    
     initialized = true;
-    crashed = false;
-    landed = false;
-    currentSound = PlaneSound::NONE;
-    previousSound = PlaneSound::NONE;
+    reset();
 }
 
 bool SoundSystem::update(bool isGrounded, float speed) {
     if (!initialized || crashed || landed) return false;
     
-    // Store previous sound for transition detection
-    previousSound = currentSound;
+    // Check status of engine sound to restart if stopped unexpectedly
+    char statusBuf[64];
+    mciSendString("status engine mode", statusBuf, sizeof(statusBuf), NULL);
+    if (currentSound != PlaneSound::NONE && strcmp(statusBuf, "playing") != 0) {
+        // Force restart if it should be playing but isn't
+        mciSendString("play engine repeat", NULL, 0, NULL);
+    }
     
-    // Determine which sound should be playing
+    previousSound = currentSound;
     PlaneSound targetSound;
     
     if (isGrounded && speed < 30.0f) {
-        // On ground and slow/stopped = idle sound
         targetSound = PlaneSound::IDLE;
     } else {
-        // Flying or moving fast on ground = flying sound
         targetSound = PlaneSound::FLYING;
     }
     
-    // Detect touchdown (flying -> idle transition)
     bool touchdown = (previousSound == PlaneSound::FLYING && targetSound == PlaneSound::IDLE);
     
-    // Only change if different from current
     if (targetSound != currentSound) {
         currentSound = targetSound;
         
@@ -103,46 +122,49 @@ void SoundSystem::playCrashSound() {
     crashed = true;
     currentSound = PlaneSound::NONE;
     
-    // Stop looping sounds and play crash
+    mciSendString("close engine", NULL, 0, NULL);
+    
     std::string fullPath = getFullPath("plane-crash.wav");
-    PlaySoundA(fullPath.c_str(), NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+    std::string command = "open " + fullPath + " type mpegvideo alias crash";
+    mciSendString(command.c_str(), NULL, 0, NULL);
+    mciSendString("play crash", NULL, 0, NULL);
 }
 
 void SoundSystem::playLandingSound() {
     landed = true;
     currentSound = PlaneSound::NONE;
     
-    // Stop looping sounds and play landing
+    mciSendString("close engine", NULL, 0, NULL);
+    
     std::string fullPath = getFullPath("planlanding.wav");
-    PlaySoundA(fullPath.c_str(), NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+    std::string command = "open " + fullPath + " type mpegvideo alias landing";
+    mciSendString(command.c_str(), NULL, 0, NULL);
+    mciSendString("play landing", NULL, 0, NULL);
 }
 
 void SoundSystem::playCoinSound() {
-    // Play coin collection sound - this one doesn't stop engine sounds
-    // We use a simple approach: just play the sound, it may briefly interrupt
-    // For a proper implementation, we'd need multiple audio channels
     std::string fullPath = getFullPath("coin.wav");
-    
-    // Use sndPlaySound which can play simultaneously (sort of)
-    // Actually PlaySound only supports one at a time, so we'll accept the brief interruption
-    // and then the update() will restart the engine sound next frame
-    PlaySoundA(fullPath.c_str(), NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
-    
-    // Force engine sound to restart on next update
-    currentSound = PlaneSound::NONE;
+    mciSendString("close coin", NULL, 0, NULL); 
+    std::string command = "open " + fullPath + " type mpegvideo alias coin";
+    mciSendString(command.c_str(), NULL, 0, NULL);
+    mciSendString("play coin", NULL, 0, NULL);
 }
 
 void SoundSystem::playTouchdownSound() {
-    // Play landing sound but don't stop engine - it will continue after
     std::string fullPath = getFullPath("planlanding.wav");
-    PlaySoundA(fullPath.c_str(), NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
-    
-    // Force engine sound to restart on next update
+    mciSendString("close touchdown", NULL, 0, NULL);
+    std::string command = "open " + fullPath + " type mpegvideo alias touchdown";
+    mciSendString(command.c_str(), NULL, 0, NULL);
+    mciSendString("play touchdown", NULL, 0, NULL);
+}
+
+void SoundSystem::stopEngineSound() {
+    mciSendString("close engine", NULL, 0, NULL);
     currentSound = PlaneSound::NONE;
 }
 
 void SoundSystem::stopAll() {
-    PlaySoundA(NULL, NULL, 0);
+    mciSendString("close all", NULL, 0, NULL);
     currentSound = PlaneSound::NONE;
 }
 
@@ -151,5 +173,5 @@ void SoundSystem::reset() {
     landed = false;
     currentSound = PlaneSound::NONE;
     previousSound = PlaneSound::NONE;
-    PlaySoundA(NULL, NULL, 0);
+    mciSendString("close all", NULL, 0, NULL);
 }

@@ -40,6 +40,9 @@ public:
     // Play touchdown sound (when landing anywhere, not stopping engine)
     void playTouchdownSound();
     
+    // Stop engine sound (but keep others if needed, for now aliases stopAll or resets current state)
+    void stopEngineSound();
+
     // Stop all sounds
     void stopAll();
     

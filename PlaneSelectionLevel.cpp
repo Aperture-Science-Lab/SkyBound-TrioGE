@@ -12,7 +12,7 @@ int PlaneSelectionLevel::selectedPlane = 0;
 
 PlaneSelectionLevel::PlaneSelectionLevel() 
         : Level(), highlightedPlane(0), rotationAngle(0.0f), pulseTimer(0.0f),
-            screenWidth(1280), screenHeight(720), tex_plane1(0), tex_plane2(0) {
+            screenWidth(1280), screenHeight(720), tex_plane1(0), tex_plane2(0), tex_plane3(0) {
 }
 
 PlaneSelectionLevel::~PlaneSelectionLevel() {
@@ -42,6 +42,10 @@ void PlaneSelectionLevel::init() {
     model_plane2.Load("Models/plane 2/plane2.3ds");
     printf("Loaded plane 2 model (objects: %d, materials: %d)\n", model_plane2.numObjects, model_plane2.numMaterials);
 
+    // Load plane 3 model
+    model_plane3.Load("Models/plane 3/plane 3.3ds");
+    printf("Loaded plane 3 model (objects: %d, materials: %d)\n", model_plane3.numObjects, model_plane3.numMaterials);
+
     // Skip external BMP load to avoid DIB incompatibility; rely on embedded materials
     
     // Let models use their own textures
@@ -63,11 +67,6 @@ void PlaneSelectionLevel::render() {
         return;
     }
     
-    static int renderCount = 0;
-    if (renderCount < 100) {
-        printf("  PlaneSelect::render() #%d, active=%d\n", renderCount++, active);
-    }
-    
     // Sync viewport with current window size
     int winW = glutGet(GLUT_WINDOW_WIDTH);
     int winH = glutGet(GLUT_WINDOW_HEIGHT);
@@ -77,11 +76,11 @@ void PlaneSelectionLevel::render() {
     }
     glViewport(0, 0, screenWidth, screenHeight);
 
-    // Clear to flat mid-gray background for visibility
+    // Clear with gradient-like dark blue background
     glDisable(GL_SCISSOR_TEST);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthMask(GL_TRUE);
-    glClearColor(0.5f, 0.5f, 0.5f, 1.0f);  // Brighter gray
+    glClearColor(0.08f, 0.12f, 0.22f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // 2D UI pass
@@ -94,79 +93,188 @@ void PlaneSelectionLevel::render() {
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_LIGHTING);
     glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Card positions
-    float cardWidth = 280.0f;
-    float cardHeight = 180.0f;
-    float gap = 80.0f;
-    float centerX = screenWidth * 0.5f;
-    float centerY = screenHeight * 0.55f;
-    float leftX = centerX - cardWidth - gap * 0.5f;
-    float rightX = centerX + gap * 0.5f;
-    float cardY = centerY - cardHeight * 0.5f;
-
-    // Force white color for testing
-    glColor3f(1.0f, 1.0f, 1.0f);
+    // Draw background gradient panels
     glBegin(GL_QUADS);
-        glVertex2f(100, 100);
-        glVertex2f(300, 100);
-        glVertex2f(300, 300);
-        glVertex2f(100, 300);
+    glColor4f(0.1f, 0.15f, 0.25f, 1.0f);
+    glVertex2f(0, 0);
+    glVertex2f(screenWidth, 0);
+    glColor4f(0.05f, 0.08f, 0.15f, 1.0f);
+    glVertex2f(screenWidth, screenHeight);
+    glVertex2f(0, screenHeight);
     glEnd();
-    
-    auto drawCard = [](float x, float y, float w, float h, bool selected, const float color[3]) {
-        float border = 6.0f;
-        glColor3f(color[0] * 0.6f, color[1] * 0.6f, color[2] * 0.6f);
-        glBegin(GL_QUADS);
-            glVertex2f(x - border, y - border);
-            glVertex2f(x + w + border, y - border);
-            glVertex2f(x + w + border, y + h + border);
-            glVertex2f(x - border, y + h + border);
-        glEnd();
-        glColor3f(color[0], color[1], color[2]);
-        glBegin(GL_QUADS);
-            glVertex2f(x, y);
-            glVertex2f(x + w, y);
-            glVertex2f(x + w, y + h);
-            glVertex2f(x, y + h);
-        glEnd();
-        if (selected) {
-            glColor3f(1.0f, 1.0f, 1.0f);
-            glLineWidth(3.0f);
-            glBegin(GL_LINE_LOOP);
-                glVertex2f(x - border, y - border);
-                glVertex2f(x + w + border, y - border);
-                glVertex2f(x + w + border, y + h + border);
-                glVertex2f(x - border, y + h + border);
-            glEnd();
-            glLineWidth(1.0f);
-        }
+
+    // Card layout for 3 planes
+    float cardWidth = 220.0f;
+    float cardHeight = 280.0f;
+    float gap = 40.0f;
+    float totalWidth = cardWidth * 3 + gap * 2;
+    float startX = (screenWidth - totalWidth) * 0.5f;
+    float cardY = screenHeight * 0.35f;
+
+    // Plane names and colors
+    const char* planeNames[3] = {"ZERO FIGHTER", "INTERCEPTOR", "STEALTH JET"};
+    const char* planeDesc[3] = {"Classic WWII fighter", "Modern combat aircraft", "Advanced stealth plane"};
+    const float cardColors[3][3] = {
+        {0.15f, 0.25f, 0.45f},  // Blue
+        {0.15f, 0.40f, 0.30f},  // Green
+        {0.35f, 0.20f, 0.40f}   // Purple
     };
 
     // Draw cards
-    const float blue[3] = {0.20f, 0.36f, 0.65f};
-    const float green[3] = {0.19f, 0.55f, 0.38f};
-    drawCard(leftX, cardY, cardWidth, cardHeight, highlightedPlane == 0, blue);
-    drawCard(rightX, cardY, cardWidth, cardHeight, highlightedPlane == 1, green);
+    for (int i = 0; i < 3; i++) {
+        float cardX = startX + i * (cardWidth + gap);
+        bool selected = (highlightedPlane == i);
+        float scale = selected ? 1.08f : 1.0f;
+        float pulse = selected ? (0.15f * sin(pulseTimer * 3.0f)) : 0.0f;
+        
+        float actualWidth = cardWidth * scale;
+        float actualHeight = cardHeight * scale;
+        float offsetX = (actualWidth - cardWidth) * 0.5f;
+        float offsetY = (actualHeight - cardHeight) * 0.5f;
+        float x = cardX - offsetX;
+        float y = cardY - offsetY;
 
-    // Text labels
+        // Card shadow
+        glColor4f(0.0f, 0.0f, 0.0f, 0.4f);
+        glBegin(GL_QUADS);
+        glVertex2f(x + 8, y - 8);
+        glVertex2f(x + actualWidth + 8, y - 8);
+        glVertex2f(x + actualWidth + 8, y + actualHeight - 8);
+        glVertex2f(x + 8, y + actualHeight - 8);
+        glEnd();
+
+        // Card background with glow if selected
+        if (selected) {
+            glColor4f(cardColors[i][0] + pulse + 0.3f, cardColors[i][1] + pulse + 0.3f, cardColors[i][2] + pulse + 0.3f, 0.3f);
+            glBegin(GL_QUADS);
+            glVertex2f(x - 10, y - 10);
+            glVertex2f(x + actualWidth + 10, y - 10);
+            glVertex2f(x + actualWidth + 10, y + actualHeight + 10);
+            glVertex2f(x - 10, y + actualHeight + 10);
+            glEnd();
+        }
+
+        // Card body
+        glColor4f(cardColors[i][0] + pulse, cardColors[i][1] + pulse, cardColors[i][2] + pulse, 0.95f);
+        glBegin(GL_QUADS);
+        glVertex2f(x, y);
+        glVertex2f(x + actualWidth, y);
+        glVertex2f(x + actualWidth, y + actualHeight);
+        glVertex2f(x, y + actualHeight);
+        glEnd();
+
+        // Card border
+        if (selected) {
+            glColor4f(1.0f, 0.9f, 0.4f, 1.0f);
+            glLineWidth(4.0f);
+        } else {
+            glColor4f(0.5f, 0.5f, 0.6f, 0.8f);
+            glLineWidth(2.0f);
+        }
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(x, y);
+        glVertex2f(x + actualWidth, y);
+        glVertex2f(x + actualWidth, y + actualHeight);
+        glVertex2f(x, y + actualHeight);
+        glEnd();
+        glLineWidth(1.0f);
+
+        // Plane number indicator
+        glColor4f(1.0f, 1.0f, 1.0f, 0.9f);
+        char numStr[16];
+        sprintf_s(numStr, sizeof(numStr), "%d", i + 1);
+        glRasterPos2f(x + 15, y + actualHeight - 30);
+        glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, numStr[0]);
+
+        // Plane name
+        glColor3f(1.0f, 1.0f, 1.0f);
+        float nameX = x + actualWidth * 0.5f - strlen(planeNames[i]) * 4.5f;
+        glRasterPos2f(nameX, y + 55);
+        for (const char* c = planeNames[i]; *c; ++c) 
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+
+        // Plane description
+        glColor4f(0.8f, 0.8f, 0.9f, 0.9f);
+        float descX = x + actualWidth * 0.5f - strlen(planeDesc[i]) * 3.0f;
+        glRasterPos2f(descX, y + 30);
+        for (const char* c = planeDesc[i]; *c; ++c) 
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+
+        // Selection indicator arrow
+        if (selected) {
+            float arrowX = x + actualWidth * 0.5f;
+            float arrowY = y + actualHeight + 25 + sin(pulseTimer * 4.0f) * 5.0f;
+            glColor4f(1.0f, 0.9f, 0.3f, 1.0f);
+            glBegin(GL_TRIANGLES);
+            glVertex2f(arrowX, arrowY - 15);
+            glVertex2f(arrowX - 12, arrowY);
+            glVertex2f(arrowX + 12, arrowY);
+            glEnd();
+        }
+    }
+
+    // Title with shadow
+    glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
+    glRasterPos2f(screenWidth * 0.5f - 118, screenHeight - 68);
+    const char* title = "SELECT YOUR AIRCRAFT";
+    for (const char* c = title; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *c);
+
     glColor3f(1.0f, 1.0f, 1.0f);
-    glRasterPos2f(centerX - 90, screenHeight - 60);
-    const char* title = "Select Your Aircraft";
-    for (const char* c = title; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+    glRasterPos2f(screenWidth * 0.5f - 120, screenHeight - 70);
+    for (const char* c = title; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *c);
 
-    glRasterPos2f(leftX + 40, cardY + cardHeight - 30);
-    const char* p1 = "Plane 1";
-    for (const char* c = p1; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+    // Subtitle
+    glColor4f(0.7f, 0.8f, 0.9f, 0.9f);
+    glRasterPos2f(screenWidth * 0.5f - 100, screenHeight - 100);
+    const char* subtitle = "Choose your fighter wisely";
+    for (const char* c = subtitle; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
 
-    glRasterPos2f(rightX + 40, cardY + cardHeight - 30);
-    const char* p2 = "Plane 2";
-    for (const char* c = p2; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+    // Instructions bar at bottom
+    glColor4f(0.0f, 0.0f, 0.0f, 0.6f);
+    glBegin(GL_QUADS);
+    glVertex2f(0, 0);
+    glVertex2f(screenWidth, 0);
+    glVertex2f(screenWidth, 60);
+    glVertex2f(0, 60);
+    glEnd();
 
-    glColor3f(0.8f, 0.8f, 0.8f);
-    glRasterPos2f(centerX - 150, screenHeight * 0.15f);
-    const char* hint = "LEFT/RIGHT to choose, ENTER to confirm";
+    glColor4f(0.9f, 0.9f, 0.9f, 1.0f);
+    glRasterPos2f(screenWidth * 0.5f - 180, 25);
+    const char* hint = "[LEFT/RIGHT or A/D] Navigate   |   [ENTER] Confirm Selection";
     for (const char* c = hint; *c; ++c) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+
+    // Key indicators
+    float keyY = 22;
+    float keySize = 20;
+    
+    // Left arrow key
+    glColor4f(0.3f, 0.3f, 0.4f, 0.9f);
+    glBegin(GL_QUADS);
+    glVertex2f(50, keyY);
+    glVertex2f(50 + keySize, keyY);
+    glVertex2f(50 + keySize, keyY + keySize);
+    glVertex2f(50, keyY + keySize);
+    glEnd();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glRasterPos2f(55, keyY + 5);
+    glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, '<');
+
+    // Right arrow key
+    glColor4f(0.3f, 0.3f, 0.4f, 0.9f);
+    glBegin(GL_QUADS);
+    glVertex2f(80, keyY);
+    glVertex2f(80 + keySize, keyY);
+    glVertex2f(80 + keySize, keyY + keySize);
+    glVertex2f(80, keyY + keySize);
+    glEnd();
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glRasterPos2f(85, keyY + 5);
+    glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, '>');
+
+    glDisable(GL_BLEND);
 }
 
 void PlaneSelectionLevel::renderPlanePreview(int planeIndex, float xPos, float yPos, float zPos) {
@@ -175,7 +283,13 @@ void PlaneSelectionLevel::renderPlanePreview(int planeIndex, float xPos, float y
     glTranslatef(xPos, yPos, zPos);
     glTranslatef(0.0f, 0.0f, -20.0f); // push models away from camera
     glRotatef(rotationAngle, 0, 1, 0);
-    glScalef(0.01f, 0.01f, 0.01f); // downscale large models
+    
+    // Apply different scales for different planes
+    if (planeIndex == 2) {
+        glScalef(0.00001f, 0.00001f, 0.00001f); // stealth jet is much larger, scale it down more
+    } else {
+        glScalef(0.01f, 0.01f, 0.01f); // downscale large models
+    }
     
     // Highlight selected plane with glow effect
     if (planeIndex == highlightedPlane) {
@@ -208,11 +322,18 @@ void PlaneSelectionLevel::renderPlanePreview(int planeIndex, float xPos, float y
             printf("WARNING: Plane 1 has no objects to draw! Drawing placeholder cube.\n");
             glutWireCube(2.0);
         }
-    } else {
+    } else if (planeIndex == 1) {
         if (model_plane2.numObjects > 0) {
             model_plane2.Draw();
         } else {
             printf("WARNING: Plane 2 has no objects to draw! Drawing placeholder cube.\n");
+            glutWireCube(2.0);
+        }
+    } else {
+        if (model_plane3.numObjects > 0) {
+            model_plane3.Draw();
+        } else {
+            printf("WARNING: Plane 3 has no objects to draw! Drawing placeholder cube.\n");
             glutWireCube(2.0);
         }
     }
@@ -245,16 +366,23 @@ void PlaneSelectionLevel::renderUI() {
     }
     
     // Plane 1 label
-    glRasterPos2f(screenWidth / 4 - 40, 100);
-    const char* plane1Label = "FIGHTER JET";
+    glRasterPos2f(screenWidth / 5 - 40, 100);
+    const char* plane1Label = "ZERO FIGHTER";
     for (const char* c = plane1Label; *c != '\0'; c++) {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
     }
     
     // Plane 2 label
-    glRasterPos2f(3 * screenWidth / 4 - 40, 100);
+    glRasterPos2f(screenWidth / 2 - 40, 100);
     const char* plane2Label = "INTERCEPTOR";
     for (const char* c = plane2Label; *c != '\0'; c++) {
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
+    }
+    
+    // Plane 3 label
+    glRasterPos2f(4 * screenWidth / 5 - 40, 100);
+    const char* plane3Label = "STEALTH JET";
+    for (const char* c = plane3Label; *c != '\0'; c++) {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *c);
     }
     
@@ -299,11 +427,13 @@ void PlaneSelectionLevel::handleKeyboard(unsigned char key, bool pressed) {
             break;
         case 'a':
         case 'A':
-            highlightedPlane = 0;
+            highlightedPlane--;
+            if (highlightedPlane < 0) highlightedPlane = 2;
             break;
         case 'd':
         case 'D':
-            highlightedPlane = 1;
+            highlightedPlane++;
+            if (highlightedPlane > 2) highlightedPlane = 0;
             break;
     }
 }
@@ -312,9 +442,11 @@ void PlaneSelectionLevel::handleSpecialKeys(int key, bool pressed) {
     if (!pressed) return;
     
     if (key == GLUT_KEY_LEFT) {
-        highlightedPlane = 0;
+        highlightedPlane--;
+        if (highlightedPlane < 0) highlightedPlane = 2;
     } else if (key == GLUT_KEY_RIGHT) {
-        highlightedPlane = 1;
+        highlightedPlane++;
+        if (highlightedPlane > 2) highlightedPlane = 0;
     }
 }
 

@@ -1,5 +1,6 @@
 #include "Level2.h"
 #include "PlaneSelectionLevel.h"
+#include "GameManager.h"
 #include <glut.h>
 #include <cmath>
 #include <stdio.h>
@@ -231,15 +232,8 @@ Level2::~Level2() {
 void Level2::init() {
     flightSim = new FlightController();
     
-    // Load the selected plane model and texture
-    int selectedPlane = PlaneSelectionLevel::getSelectedPlane();
-    if (selectedPlane == 1) {
-        // Load plane 2
-        flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
-    } else {
-        // Load plane 1 (default)
-        flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
-    }
+    // Plane loading moved to onEnter to support switching planes dynamically
+    // flightSim->loadModelWithTexture is called in onEnter()
     
     loadAssets();
     particleEffects.init();   // Initialize particle effects system (wind)
@@ -344,6 +338,33 @@ void Level2::loadAssets() {
     model_buildings[8].Load("Models/buildings/Residential Buildings 009.3ds");
     model_buildings[9].Load("Models/buildings/Residential Buildings 010.3ds");
     
+    // Load unique landmark buildings for city center
+    model_oldHotel.Load("models/buildings/oldhotel.3ds");
+    model_laPazTower.Load("models/buildings/La Paz Tower.3ds");
+    model_tower.Load("models/buildings/tower.3ds");
+    model_skyscraper02.Load("models/buildings/uploads_files_2616256_skyscraper_02.3DS");
+    model_empireTrust.Load("models/buildings/uploads_files_2000118_EmpireTrust.3ds");
+    model_stadium.Load("models/buildings/stadium.3ds");
+    model_warehouse.Load("models/buildings/wallmart.3ds");  // Wallmart for outskirts/farms
+
+    // Load warehouse texture (Steel_C.bmp) and force it on the model
+    if (!tryLoad(&tex_warehouse, "models/buildings/Steel_C.bmp", false)) {
+        printf("Failed to load warehouse texture, using fallback\n");
+        glGenTextures(1, &tex_warehouse);
+        glBindTexture(GL_TEXTURE_2D, tex_warehouse);
+        unsigned char gray[3] = { 120, 120, 130 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, gray);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    // Force warehouse materials to use Steel_C texture
+    if (tex_warehouse != 0) {
+        for (int m = 0; m < model_warehouse.numMaterials; ++m) {
+            model_warehouse.Materials[m].tex.texture[0] = tex_warehouse;
+            model_warehouse.Materials[m].textured = true;
+        }
+    }
+
     // Load runway texture
     // Pass false for useAlpha to ensure opaque rendering
     if (!tryLoad(&tex_runway, "textures/runway.bmp", false)) {
@@ -475,7 +496,27 @@ void Level2::render() {
     if (!active) return;
     
     glClearColor(0.35f, 0.45f, 0.65f, 1.0f);
+    
+    // Ensure depth test is enabled (essential when coming from menus)
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    
+    // ===== ENHANCED GRAPHICS SETTINGS =====
+    glShadeModel(GL_SMOOTH);  // Smooth Gouraud shading
+    glEnable(GL_NORMALIZE);   // Normalize normals for proper lighting after scaling
+    glEnable(GL_COLOR_MATERIAL);  // Use glColor with lighting
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+    glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_TRUE);  // Better specular
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_FALSE);  // One-sided lighting
+    
+    // Anti-aliasing hints
+    glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+    glHint(GL_POLYGON_SMOOTH_HINT, GL_NICEST);
+    
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_LIGHTING);
     
@@ -500,13 +541,171 @@ void Level2::render() {
         skySystem.renderClouds(flightSim->player.position);
     }
     
-    GLfloat lightIntensity[] = { 0.7f, 0.7f, 0.7f, 1.0f };
-    GLfloat lightPosition[] = { 0.0f, 100.0f, 0.0f, 0.0f };
-    glLightfv(GL_LIGHT0, GL_POSITION, lightPosition);
-    glLightfv(GL_LIGHT0, GL_AMBIENT, lightIntensity);
+    // ===== AAA LIGHTING SYSTEM =====
+    // Get time-of-day lighting from sky system
+    DayLighting lighting = skySystem.getCurrentLighting();
+    bool isNight = skySystem.isNightTime();
+    
+    // GL_LIGHT0: Directional Sun/Moon Light
+    GLfloat sunDirection[] = { 0.3f, -0.7f, -0.5f, 0.0f };  // Directional (w=0)
+    GLfloat sunAmbient[] = { 0.3f, 0.3f, 0.35f, 1.0f };
+    GLfloat sunDiffuse[] = { 0.9f, 0.85f, 0.7f, 1.0f };  // Warm daylight
+    GLfloat sunSpecular[] = { 1.0f, 0.95f, 0.8f, 1.0f };
+    
+    // Dynamic time-of-day adjustment
+    if (isNight) {
+        // Cool blue moonlight
+        sunAmbient[0] = 0.1f; sunAmbient[1] = 0.12f; sunAmbient[2] = 0.18f;
+        sunDiffuse[0] = 0.2f; sunDiffuse[1] = 0.25f; sunDiffuse[2] = 0.4f;
+        sunSpecular[0] = 0.3f; sunSpecular[1] = 0.35f; sunSpecular[2] = 0.5f;
+    } else if (lighting.sunHeight < 0.3f) {
+        // Sunrise/sunset - orange/red tint
+        float t = lighting.sunHeight / 0.3f;
+        sunDiffuse[0] = 1.0f;
+        sunDiffuse[1] = 0.5f + t * 0.35f;
+        sunDiffuse[2] = 0.3f + t * 0.4f;
+    }
+    
+    glEnable(GL_LIGHT0);
+    glLightfv(GL_LIGHT0, GL_POSITION, sunDirection);
+    glLightfv(GL_LIGHT0, GL_AMBIENT, sunAmbient);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, sunDiffuse);
+    glLightfv(GL_LIGHT0, GL_SPECULAR, sunSpecular);
+    
+    // GL_LIGHT1: Airport Terminal Lights + Rotating Beacon (Animation)
+    // We add a rotating offset to animate the light position or direction
+    GLfloat beaconX = terminalPosition.x + 10.0f * cos(runwayLightTimer * 3.14f); // Rotating
+    GLfloat beaconZ = terminalPosition.z + 10.0f * sin(runwayLightTimer * 3.14f);
+    
+    GLfloat terminalLightPos[] = { beaconX, terminalPosition.y + 40.0f, beaconZ, 1.0f };
+    
+    // Beacon changes color over time (Red/White flash)
+    GLfloat terminalDiffuse[] = { 0.9f, 0.9f, 0.85f, 1.0f }; 
+    if (fmod(runwayLightTimer, 1.0f) > 0.5f) {
+        // Red Flash
+        terminalDiffuse[0] = 1.0f; terminalDiffuse[1] = 0.0f; terminalDiffuse[2] = 0.0f;
+    } else {
+        // White Flash
+        terminalDiffuse[0] = 1.0f; terminalDiffuse[1] = 1.0f; terminalDiffuse[2] = 1.0f; 
+    }
+    
+    GLfloat terminalAmbient[] = { 0.05f, 0.05f, 0.05f, 1.0f };
+    GLfloat terminalSpecular[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    
+    if (isNight) {
+        glEnable(GL_LIGHT1);
+        glLightfv(GL_LIGHT1, GL_POSITION, terminalLightPos);
+        glLightfv(GL_LIGHT1, GL_AMBIENT, terminalAmbient);
+        glLightfv(GL_LIGHT1, GL_DIFFUSE, terminalDiffuse);
+        glLightfv(GL_LIGHT1, GL_SPECULAR, terminalSpecular);
+        glLightf(GL_LIGHT1, GL_CONSTANT_ATTENUATION, 1.0f);
+        glLightf(GL_LIGHT1, GL_LINEAR_ATTENUATION, 0.01f);
+        glLightf(GL_LIGHT1, GL_QUADRATIC_ATTENUATION, 0.002f);
+    } else {
+        glDisable(GL_LIGHT1);
+    }
+    
+    // GL_LIGHT2: Runway Approach Lights
+    GLfloat runwayLightPos[] = { runwayPosition.x, runwayPosition.y + 5.0f, runwayPosition.z - runwayLength/2, 1.0f };
+    GLfloat runwayDiffuse[] = { 0.95f, 0.95f, 1.0f, 1.0f };  // Bright white runway lights
+    GLfloat runwaySpecular[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    
+    if (isNight) {
+        glEnable(GL_LIGHT2);
+        glLightfv(GL_LIGHT2, GL_POSITION, runwayLightPos);
+        glLightfv(GL_LIGHT2, GL_AMBIENT, terminalAmbient);
+        glLightfv(GL_LIGHT2, GL_DIFFUSE, runwayDiffuse);
+        glLightfv(GL_LIGHT2, GL_SPECULAR, runwaySpecular);
+        glLightf(GL_LIGHT2, GL_CONSTANT_ATTENUATION, 1.0f);
+        glLightf(GL_LIGHT2, GL_LINEAR_ATTENUATION, 0.02f);
+        glLightf(GL_LIGHT2, GL_QUADRATIC_ATTENUATION, 0.005f);
+    } else {
+        glDisable(GL_LIGHT2);
+    }
+    
+    // GL_LIGHT3: Dynamic Plane Landing Lights (forward spotlight)
+    if (flightSim && flightSim->player.throttle > 0.3f) {
+        Vector3f lightPos = flightSim->player.position + flightSim->player.forward * 5.0f;
+        GLfloat planeLightPos[] = { lightPos.x, lightPos.y, lightPos.z, 1.0f };
+        GLfloat planeLightDir[] = { flightSim->player.forward.x, flightSim->player.forward.y, flightSim->player.forward.z };
+        GLfloat planeDiffuse[] = { 1.0f, 1.0f, 0.95f, 1.0f };
+
+        glEnable(GL_LIGHT3);
+        glLightfv(GL_LIGHT3, GL_POSITION, planeLightPos);
+        glLightfv(GL_LIGHT3, GL_SPOT_DIRECTION, planeLightDir);
+        glLightfv(GL_LIGHT3, GL_DIFFUSE, planeDiffuse);
+        glLightfv(GL_LIGHT3, GL_SPECULAR, planeDiffuse);
+        glLightf(GL_LIGHT3, GL_SPOT_CUTOFF, 25.0f);  // 25 degree cone
+        glLightf(GL_LIGHT3, GL_SPOT_EXPONENT, 15.0f);  // Focused beam
+        glLightf(GL_LIGHT3, GL_CONSTANT_ATTENUATION, 1.0f);
+        glLightf(GL_LIGHT3, GL_LINEAR_ATTENUATION, 0.05f);
+        glLightf(GL_LIGHT3, GL_QUADRATIC_ATTENUATION, 0.01f);
+    } else {
+        glDisable(GL_LIGHT3);
+    }
+
+    // GL_LIGHT4: Secondary Fill Light (opposite side of sun for softer shadows)
+    GLfloat fillLightPos[] = { -0.5f, 0.3f, 0.5f, 0.0f };  // Directional fill
+    GLfloat fillDiffuse[] = { 0.25f, 0.28f, 0.35f, 1.0f };  // Cool blue fill
+    GLfloat fillSpecular[] = { 0.1f, 0.1f, 0.15f, 1.0f };
+    glEnable(GL_LIGHT4);
+    glLightfv(GL_LIGHT4, GL_POSITION, fillLightPos);
+    glLightfv(GL_LIGHT4, GL_DIFFUSE, fillDiffuse);
+    glLightfv(GL_LIGHT4, GL_SPECULAR, fillSpecular);
+    GLfloat noAmbient[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    glLightfv(GL_LIGHT4, GL_AMBIENT, noAmbient);
+
+    // GL_LIGHT5: Rim/Back Light for better object definition
+    GLfloat rimLightPos[] = { 0.0f, 0.8f, -1.0f, 0.0f };  // From behind/above
+    GLfloat rimDiffuse[] = { 0.3f, 0.32f, 0.4f, 1.0f };   // Subtle rim light
+    GLfloat rimSpecular[] = { 0.5f, 0.5f, 0.6f, 1.0f };   // Stronger specular for rim
+    glEnable(GL_LIGHT5);
+    glLightfv(GL_LIGHT5, GL_POSITION, rimLightPos);
+    glLightfv(GL_LIGHT5, GL_DIFFUSE, rimDiffuse);
+    glLightfv(GL_LIGHT5, GL_SPECULAR, rimSpecular);
+    glLightfv(GL_LIGHT5, GL_AMBIENT, noAmbient);
+
+    // GL_LIGHT6: Ground Bounce Light (simulates light bouncing off terrain)
+    if (!isNight) {
+        GLfloat groundBouncePos[] = { 0.0f, -1.0f, 0.0f, 0.0f };  // From below
+        GLfloat groundBounceDiffuse[] = { 0.12f, 0.15f, 0.1f, 1.0f };  // Greenish ground bounce
+        glEnable(GL_LIGHT6);
+        glLightfv(GL_LIGHT6, GL_POSITION, groundBouncePos);
+        glLightfv(GL_LIGHT6, GL_DIFFUSE, groundBounceDiffuse);
+        glLightfv(GL_LIGHT6, GL_SPECULAR, noAmbient);
+        glLightfv(GL_LIGHT6, GL_AMBIENT, noAmbient);
+    } else {
+        glDisable(GL_LIGHT6);
+    }
+
+    // Set global ambient light
+    GLfloat globalAmbient[] = { 0.2f, 0.2f, 0.25f, 1.0f };
+    if (isNight) {
+        globalAmbient[0] = 0.05f; globalAmbient[1] = 0.05f; globalAmbient[2] = 0.08f;
+    }
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, globalAmbient);
+    
+    // ===== ATMOSPHERIC FOG FOR DEPTH =====
+    glEnable(GL_FOG);
+    glFogi(GL_FOG_MODE, GL_EXP2);  // Exponential fog for realistic atmosphere
+    
+    // Dynamic fog color based on time of day
+    GLfloat fogColor[4];
+    if (isNight) {
+        fogColor[0] = 0.02f; fogColor[1] = 0.03f; fogColor[2] = 0.08f; fogColor[3] = 1.0f;  // Dark blue night
+    } else if (lighting.sunHeight < 0.3f) {
+        // Sunrise/sunset - golden haze
+        float t = lighting.sunHeight / 0.3f;
+        fogColor[0] = 0.8f; fogColor[1] = 0.5f + t * 0.2f; fogColor[2] = 0.4f + t * 0.3f; fogColor[3] = 1.0f;
+    } else {
+        fogColor[0] = 0.6f; fogColor[1] = 0.7f; fogColor[2] = 0.85f; fogColor[3] = 1.0f;  // Hazy blue sky
+    }
+    glFogfv(GL_FOG_COLOR, fogColor);
+    glFogf(GL_FOG_DENSITY, 0.0006f);  // Slightly less fog for city visibility
+    glHint(GL_FOG_HINT, GL_NICEST);
     
     // Update shadow system light direction based on time of day
-    DayLighting lighting = skySystem.getCurrentLighting();
+    // (reuse 'lighting' variable from above)
     Vector3f shadowLightDir(0.3f, -0.9f, 0.2f);
     if (lighting.sunHeight > 0) {
         shadowLightDir.y = -lighting.sunHeight;
@@ -600,48 +799,53 @@ void Level2::render() {
 }
 
 void Level2::renderGround() {
+    // CRITICAL FIX: Completely disable lighting AND fog for ground
+    // Blue tint was caused by blue fog color blending with ground at distance/angles
+    GLboolean lightingWasEnabled = glIsEnabled(GL_LIGHTING);
+    GLboolean fogWasEnabled = glIsEnabled(GL_FOG);
     glDisable(GL_LIGHTING);
+    glDisable(GL_FOG);  // Disable fog to prevent blue tint from fog color
 
     // Track previous cull state so we can restore it
     GLboolean wasCullEnabled = glIsEnabled(GL_CULL_FACE);
     glDisable(GL_CULL_FACE);  // Draw both sides to avoid upside-down black view
-    
+
     float px = 0, pz = 0;
     if (flightSim) {
         px = flightSim->player.position.x;
         pz = flightSim->player.position.z;
     }
-    
+
     float size = 2000.0f;
     float texScale = 0.02f;  // Controls texture density (smaller = more repetitions)
-    
+
     glPushMatrix();
     glTranslatef(px, 0, pz);  // Ground follows player
-    
+
     // Ensure proper texture state
     glEnable(GL_TEXTURE_2D);
     glDisable(GL_BLEND);
-    
-    // Check if texture loaded - use green fallback if not
+
+    // Check if texture loaded - use fallback color if not
     if (tex_ground != 0) {
         glBindTexture(GL_TEXTURE_2D, tex_ground);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-        glColor3f(1.0f, 1.0f, 1.0f);
+        // Use REPLACE to show ONLY the texture - no lighting influence at all
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
     } else {
-        // Fallback to green if texture failed to load
         glDisable(GL_TEXTURE_2D);
-        glColor3f(0.2f, 0.5f, 0.2f);
+        // Neutral earthy color without any blue
+        glColor3f(0.55f, 0.5f, 0.4f);
     }
-    
+
     // Use world coordinates for texture mapping so texture stays fixed in world space
     // This prevents the texture from sliding as the camera moves
     float worldMinX = px - size;
     float worldMaxX = px + size;
     float worldMinZ = pz - size;
     float worldMaxZ = pz + size;
-    
+
     glBegin(GL_QUADS);
     glNormal3f(0, 1, 0);
     glTexCoord2f(worldMinX * texScale, worldMinZ * texScale); glVertex3f(-size, 0, -size);
@@ -649,14 +853,20 @@ void Level2::renderGround() {
     glTexCoord2f(worldMaxX * texScale, worldMaxZ * texScale); glVertex3f(size, 0, size);
     glTexCoord2f(worldMinX * texScale, worldMaxZ * texScale); glVertex3f(-size, 0, size);
     glEnd();
-    
+
     glPopMatrix();
+
+    // Reset texture environment back to normal for other objects
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
     glDisable(GL_TEXTURE_2D);   // Prevent texture bleed into plane rendering
 
     // Restore previous culling state
     if (wasCullEnabled) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
 
-    glEnable(GL_LIGHTING);
+    // Restore lighting and fog for other objects
+    if (lightingWasEnabled) glEnable(GL_LIGHTING);
+    if (fogWasEnabled) glEnable(GL_FOG);
+
     glColor3f(1, 1, 1);
 }
 
@@ -779,7 +989,10 @@ void Level2::renderGrass() {
 
 void Level2::handleKeyboard(unsigned char key, bool pressed) {
     if (!active) return;
-    if (key == 27) exit(0);
+    if (key == 27) {  // ESC - open options menu
+        GameManager::getInstance().switchToLevel("options");
+        return;
+    }
     if (flightSim) flightSim->handleInput(key, pressed);
     // Reset key - full game reset including plane
     if ((key == 'r' || key == 'R') && pressed) {
@@ -864,8 +1077,12 @@ void Level2::onEnter() {
         int selectedPlane = PlaneSelectionLevel::getSelectedPlane();
         printf("Level2 loading plane %d on enter\n", selectedPlane);
         flightSim->modelLoaded = false;  // allow reload
-        if (selectedPlane == 1) {
+        if (selectedPlane == 0) {
+            flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
+        } else if (selectedPlane == 1) {
             flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
+        } else if (selectedPlane == 2) {
+            flightSim->loadModelWithTexture("Models/plane 3/plane 3.3ds", "");
         } else {
             flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
         }
@@ -913,18 +1130,18 @@ void Level2::cleanup() {
 void Level2::initFuelContainers() {
     fuelContainers.clear();
     collectedCount = 0;
-    
+
     // Spawn fuel containers at various locations around the map
     const int numContainers = 15;
     float spawnRadius = 300.0f;
-    
+
     for (int i = 0; i < numContainers; i++) {
         FuelCollectable container;
         // Distribute containers in a circular pattern
         float angle = (float)i / numContainers * 2.0f * 3.14159f;
         float distance = 50.0f + (rand() % (int)spawnRadius);
         container.position.x = cos(angle) * distance;
-        container.position.y = 20.0f + (rand() % 80);  // Random altitude between 20-100
+        container.position.y = 50.0f + (rand() % 100);  // Random altitude between 50-150 (moved up)
         container.position.z = sin(angle) * distance;
         container.collected = false;
         container.bobOffset = (float)(rand() % 628) / 100.0f;  // Random starting phase
@@ -1341,44 +1558,176 @@ void Level2::renderAirportTerminal() {
 void Level2::initBuildings() {
     buildings.clear();
     
-    // Create buildings far from the center and airport (-800, 0, -800)
-    // Buildings will be placed in outer ring around 400-700 units from center
-    // but NOT in the direction of the airport (which is at -800, -800)
-    const int numBuildings = 30;
+    // Define city center grid layout with roads (streets in between buildings)
+    // Road width: 80 units, Block size: 120 units (40 unit building + buffer)
+    const float roadWidth = 80.0f;
+    const float blockSize = 120.0f;
+    const Vector3f cityCenter(0.0f, 0.0f, 200.0f);  // City center position
+    
+    // ===== CITY CENTER: Place 6 unique landmark buildings in a grid with roads =====
+    
+    
+    BuildingObstacle tower;
+    tower.position = Vector3f(cityCenter.x, 0.0f, cityCenter.z - blockSize);
+    tower.isLandmark = true;
+    tower.landmarkType = 2;  // Tower
+    tower.modelIndex = -1;
+    tower.rotation = 0.0f;
+    tower.scale = 0.02f;
+    // MANUALLY ADJUSTED HURTBOX (collision box) because model scale makes it too small
+    tower.width = 40.0f;   // Fixed 40 units wide
+    tower.height = 200.0f; // Fixed 200 units tall
+    tower.depth = 40.0f;   // Fixed 40 units deep
+    buildings.push_back(tower);
+    
+    BuildingObstacle oldHotel;
+    oldHotel.position = Vector3f(cityCenter.x + blockSize, 0.0f, cityCenter.z - blockSize);
+    oldHotel.isLandmark = true;
+    oldHotel.landmarkType = 0;  // Old Hotel
+    oldHotel.modelIndex = -1;
+    oldHotel.rotation = 0.0f;
+    oldHotel.scale = 0.6f;
+    oldHotel.width = 35.0f * oldHotel.scale;
+    oldHotel.height = 80.0f * oldHotel.scale;
+    oldHotel.depth = 35.0f * oldHotel.scale;
+    buildings.push_back(oldHotel);
+    
+    // Row 2: Skyscraper 02 (left), Empire Trust (center), Stadium (right)
+    BuildingObstacle skyscraper;
+    skyscraper.position = Vector3f(cityCenter.x - blockSize, 0.0f, cityCenter.z + blockSize);
+    skyscraper.isLandmark = true;
+    skyscraper.landmarkType = 3;  // Skyscraper 02
+    skyscraper.modelIndex = -1;
+    skyscraper.rotation = 0.0f;
+    skyscraper.scale = 0.9f;
+    skyscraper.width = 28.0f * skyscraper.scale;
+    skyscraper.height = 150.0f * skyscraper.scale;
+    skyscraper.depth = 28.0f * skyscraper.scale;
+    buildings.push_back(skyscraper);
+    
+    BuildingObstacle empireTrust;
+    empireTrust.position = Vector3f(cityCenter.x, 0.0f, cityCenter.z + blockSize);
+    empireTrust.isLandmark = true;
+    empireTrust.landmarkType = 4;  // Empire Trust
+    empireTrust.modelIndex = -1;
+    empireTrust.rotation = 0.0f;
+    empireTrust.scale = 0.8f;
+    empireTrust.width = 32.0f * empireTrust.scale;
+    empireTrust.height = 130.0f * empireTrust.scale;
+    empireTrust.depth = 32.0f * empireTrust.scale;
+    buildings.push_back(empireTrust);
+    
+    BuildingObstacle stadium;
+    stadium.position = Vector3f(cityCenter.x + blockSize, 0.0f, cityCenter.z + blockSize);
+    stadium.isLandmark = true;
+    stadium.landmarkType = 5;  // Stadium
+    stadium.modelIndex = -1;
+    stadium.rotation = 0.0f;
+    stadium.scale = 0.02f;
+    // MANUALLY ADJUSTED HURTBOX (collision box)
+    stadium.width = 150.0f; // Large collision area for stadium
+    stadium.height = 60.0f;
+    stadium.depth = 150.0f;
+    buildings.push_back(stadium);
+    
+    // ===== SURROUNDING AREA: Place regular residential buildings around the landmarks =====
+    // Create buildings far from the city center and airport (-800, 0, -800)
+    const int numBuildings = 40;  // Increased from 30
     
     for (int i = 0; i < numBuildings; i++) {
         BuildingObstacle building;
+        building.isLandmark = false;
+        building.landmarkType = -1;
         
-        // Distribute buildings in a ring around the map, avoiding city center and airport
+        // Distribute buildings in rings, avoiding city center and airport
         float angle = (float)(rand() % 360) * 3.14159f / 180.0f;
         
-        // Check if this angle points towards the airport (southwest quadrant)
-        // Airport is at -800, -800 which is around 225 degrees
-        float angleDeg = angle * 180.0f / 3.14159f;
-        
         // Skip the southwest quadrant (180-270 degrees) to keep clear path to airport
+        float angleDeg = angle * 180.0f / 3.14159f;
         if (angleDeg > 180.0f && angleDeg < 280.0f) {
             angle += 1.57f;  // Shift by 90 degrees
         }
         
-        // Place buildings in outer ring (400-700 units from center)
-        // This keeps them away from city at center and leaves space for flying
-        float distance = 400.0f + (rand() % 300);  // 400-700 units from center
+        // Place buildings in outer rings, avoiding city center landmarks
+        float distance;
+        if (i < 15) {
+            distance = 300.0f + (rand() % 150);  // Inner ring: 300-450 units
+        } else {
+            distance = 500.0f + (rand() % 300);  // Outer ring: 500-800 units
+        }
         
         building.position.x = cos(angle) * distance;
         building.position.y = 0.0f;  // On ground
         building.position.z = sin(angle) * distance;
         
+        // Check if too close to landmark buildings (avoid intersections)
+        bool tooClose = false;
+        for (size_t j = 0; j < buildings.size(); j++) {
+            if (buildings[j].isLandmark) {
+                float dx = building.position.x - buildings[j].position.x;
+                float dz = building.position.z - buildings[j].position.z;
+                float dist = sqrt(dx * dx + dz * dz);
+                if (dist < 100.0f) {  // Minimum 100 units from landmarks
+                    tooClose = true;
+                    break;
+                }
+            }
+        }
+        if (tooClose) {
+            i--;  // Retry this building
+            continue;
+        }
+        
         building.modelIndex = rand() % 10;  // Random building type
         building.rotation = (float)(rand() % 360);  // Random rotation
-        building.scale = 1.5f + (float)(rand() % 150) / 100.0f;  // 0.3 to 0.6 scale
-        
+        building.scale = 1.5f + (float)(rand() % 150) / 100.0f;  // 1.5 to 3.0 scale
+
         // Collision box dimensions (approximate for buildings)
         building.width = 15.0f * building.scale;
         building.height = 40.0f * building.scale + (float)(rand() % 30);  // Varying heights
         building.depth = 15.0f * building.scale;
-        
+
         buildings.push_back(building);
+    }
+
+    // ===== OUTSKIRTS FARM/INDUSTRIAL ZONE: Warehouses scattered among forest =====
+    // Place warehouses in the far outskirts, creating farm/industrial patterns
+    const int numWarehouses = 12;
+    const float outskirtsMinDist = 900.0f;   // Far from city center
+    const float outskirtsMaxDist = 1400.0f;  // But not too far
+
+    for (int i = 0; i < numWarehouses; i++) {
+        BuildingObstacle warehouse;
+        warehouse.isLandmark = true;
+        warehouse.landmarkType = 6;  // Warehouse type
+        warehouse.modelIndex = -1;
+
+        // Distribute warehouses in a ring around the far outskirts
+        float angle = (float)i / numWarehouses * 2.0f * 3.14159f + (float)(rand() % 30) * 0.01f;
+        float distance = outskirtsMinDist + (rand() % (int)(outskirtsMaxDist - outskirtsMinDist));
+
+        warehouse.position.x = cos(angle) * distance;
+        warehouse.position.y = 0.0f;
+        warehouse.position.z = sin(angle) * distance;
+
+        // Check distance from airport to avoid collision
+        float dxAirport = warehouse.position.x - runwayPosition.x;
+        float dzAirport = warehouse.position.z - runwayPosition.z;
+        float distFromAirport = sqrt(dxAirport * dxAirport + dzAirport * dzAirport);
+        if (distFromAirport < 400.0f) {
+            // Skip this position - too close to airport
+            continue;
+        }
+
+        warehouse.rotation = (float)(rand() % 4) * 90.0f;  // Align to cardinal directions
+        warehouse.scale = 0.003f;  // 1.2 to 1.8 scale
+
+        // Warehouse collision box (MANUALLY ADJUSTED)
+        warehouse.width = 60.0f;
+        warehouse.height = 40.0f;
+        warehouse.depth = 60.0f;
+
+        buildings.push_back(warehouse);
     }
 }
 
@@ -1397,8 +1746,42 @@ void Level2::renderBuildings() {
         // Scale the building
         glScalef(b.scale, b.scale, b.scale);
         
-        // Draw the building model
-        model_buildings[b.modelIndex].Draw();
+        // Set material properties based on building type
+        if (b.isLandmark) {
+            // Landmark buildings - glass & steel (high specular)
+            GLfloat landmarkAmbient[] = { 0.3f, 0.3f, 0.35f, 1.0f };
+            GLfloat landmarkDiffuse[] = { 0.7f, 0.7f, 0.75f, 1.0f };
+            GLfloat landmarkSpecular[] = { 0.9f, 0.9f, 0.95f, 1.0f };
+            GLfloat landmarkShininess = 60.0f;  // Very shiny glass/steel
+            glMaterialfv(GL_FRONT, GL_AMBIENT, landmarkAmbient);
+            glMaterialfv(GL_FRONT, GL_DIFFUSE, landmarkDiffuse);
+            glMaterialfv(GL_FRONT, GL_SPECULAR, landmarkSpecular);
+            glMaterialf(GL_FRONT, GL_SHININESS, landmarkShininess);
+            
+            // Draw landmark building based on type
+            switch (b.landmarkType) {
+                case 0: model_oldHotel.Draw(); break;
+                case 1: model_laPazTower.Draw(); break;
+                case 2: model_tower.Draw(); break;
+                case 3: model_skyscraper02.Draw(); break;
+                case 4: model_empireTrust.Draw(); break;
+                case 5: model_stadium.Draw(); break;
+                case 6: model_warehouse.Draw(); break;  // Warehouse for outskirts
+            }
+        } else {
+            // Regular residential buildings - concrete/brick (low specular)
+            GLfloat buildingAmbient[] = { 0.3f, 0.28f, 0.25f, 1.0f };
+            GLfloat buildingDiffuse[] = { 0.65f, 0.6f, 0.55f, 1.0f };
+            GLfloat buildingSpecular[] = { 0.2f, 0.2f, 0.2f, 1.0f };
+            GLfloat buildingShininess = 10.0f;  // Matte concrete/brick
+            glMaterialfv(GL_FRONT, GL_AMBIENT, buildingAmbient);
+            glMaterialfv(GL_FRONT, GL_DIFFUSE, buildingDiffuse);
+            glMaterialfv(GL_FRONT, GL_SPECULAR, buildingSpecular);
+            glMaterialf(GL_FRONT, GL_SHININESS, buildingShininess);
+            
+            // Draw regular residential building
+            model_buildings[b.modelIndex].Draw();
+        }
         
         glPopMatrix();
     }
@@ -1410,6 +1793,7 @@ void Level2::checkBuildingCollision() {
     Vector3f playerPos = flightSim->player.position;
     float playerRadius = 5.0f;  // Approximate plane collision radius
     
+    // Check collision with buildings
     for (size_t i = 0; i < buildings.size(); i++) {
         BuildingObstacle& b = buildings[i];
         
@@ -1432,7 +1816,33 @@ void Level2::checkBuildingCollision() {
                 // Trigger unified crash (explosion + smoke + sound)
                 crashSystem.triggerCrash(playerPos);
                 soundSystem.playCrashSound();
-                break;
+                return;
+            }
+        }
+    }
+    
+    // Check collision with trees (cylindrical collision)
+    for (size_t i = 0; i < trees.size(); i++) {
+        CardboardTree& tree = trees[i];
+        
+        // Calculate horizontal distance from tree
+        float dx = playerPos.x - tree.position.x;
+        float dz = playerPos.z - tree.position.z;
+        float horizontalDist = sqrt(dx * dx + dz * dz);
+        
+        // Check if within tree's collision radius
+        if (horizontalDist < (tree.radius + playerRadius)) {
+            // Check height - player must be below tree top
+            if (playerPos.y < tree.height && playerPos.y > 0) {
+                // CRASH! Plane hit a tree
+                flightSim->isCrashed = true;
+                flightSim->player.velocity = Vector3f(0, 0, 0);
+                flightSim->player.throttle = 0;
+                
+                // Trigger unified crash (explosion + smoke + sound)
+                crashSystem.triggerCrash(playerPos);
+                soundSystem.playCrashSound();
+                return;
             }
         }
     }
@@ -2329,28 +2739,115 @@ void Level2::renderShadows() {
 void Level2::initTrees() {
     trees.clear();
     
-    // Forest density and coverage area (realistic forest cover)
-    const int numTrees = 500;  // Dense forest coverage
-    const float forestSize = 1500.0f;  // Cover a large area
+    const Vector3f cityCenter(0.0f, 0.0f, 200.0f);
+    const float roadWidth = 80.0f;
+    const float blockSize = 120.0f;
+    const float treeSpacing = 12.0f;  // Distance between trees along roads
+    const float roadSideOffset = 6.0f;  // Trees placed on sides of roads
+    
+    // ===== STRATEGIC TREE PLACEMENT: Line roads with trees =====
+    
+    // Vertical road along X = cityCenter.x (north-south through city center)
+    for (float z = cityCenter.z - blockSize * 3; z <= cityCenter.z + blockSize * 3; z += treeSpacing) {
+        // Trees on left side of road
+        CardboardTree tree1;
+        tree1.position = Vector3f(cityCenter.x - roadWidth / 2 - roadSideOffset, 0.0f, z);
+        tree1.textureVariant = rand() % 3;
+        tree1.scale = 15.0f + (rand() % 8);
+        tree1.rotation = (rand() % 360);
+        tree1.radius = tree1.scale * 0.3f;
+        tree1.height = tree1.scale;
+        if (isPositionClearForTree(tree1.position)) {
+            trees.push_back(tree1);
+        }
+        
+        // Trees on right side of road
+        CardboardTree tree2;
+        tree2.position = Vector3f(cityCenter.x + roadWidth / 2 + roadSideOffset, 0.0f, z);
+        tree2.textureVariant = rand() % 3;
+        tree2.scale = 15.0f + (rand() % 8);
+        tree2.rotation = (rand() % 360);
+        tree2.radius = tree2.scale * 0.3f;
+        tree2.height = tree2.scale;
+        if (isPositionClearForTree(tree2.position)) {
+            trees.push_back(tree2);
+        }
+    }
+    
+    // Horizontal road at Z = cityCenter.z - blockSize (east-west through north part of city)
+    for (float x = cityCenter.x - blockSize * 2; x <= cityCenter.x + blockSize * 2; x += treeSpacing) {
+        // Trees on north side of road
+        CardboardTree tree1;
+        tree1.position = Vector3f(x, 0.0f, cityCenter.z - blockSize - roadWidth / 2 - roadSideOffset);
+        tree1.textureVariant = rand() % 3;
+        tree1.scale = 15.0f + (rand() % 8);
+        tree1.rotation = (rand() % 360);
+        tree1.radius = tree1.scale * 0.3f;
+        tree1.height = tree1.scale;
+        if (isPositionClearForTree(tree1.position)) {
+            trees.push_back(tree1);
+        }
+        
+        // Trees on south side of road
+        CardboardTree tree2;
+        tree2.position = Vector3f(x, 0.0f, cityCenter.z - blockSize + roadWidth / 2 + roadSideOffset);
+        tree2.textureVariant = rand() % 3;
+        tree2.scale = 15.0f + (rand() % 8);
+        tree2.rotation = (rand() % 360);
+        tree2.radius = tree2.scale * 0.3f;
+        tree2.height = tree2.scale;
+        if (isPositionClearForTree(tree2.position)) {
+            trees.push_back(tree2);
+        }
+    }
+    
+    // Horizontal road at Z = cityCenter.z + blockSize (east-west through south part of city)
+    for (float x = cityCenter.x - blockSize * 2; x <= cityCenter.x + blockSize * 2; x += treeSpacing) {
+        // Trees on north side of road
+        CardboardTree tree1;
+        tree1.position = Vector3f(x, 0.0f, cityCenter.z + blockSize - roadWidth / 2 - roadSideOffset);
+        tree1.textureVariant = rand() % 3;
+        tree1.scale = 15.0f + (rand() % 8);
+        tree1.rotation = (rand() % 360);
+        tree1.radius = tree1.scale * 0.3f;
+        tree1.height = tree1.scale;
+        if (isPositionClearForTree(tree1.position)) {
+            trees.push_back(tree1);
+        }
+        
+        // Trees on south side of road
+        CardboardTree tree2;
+        tree2.position = Vector3f(x, 0.0f, cityCenter.z + blockSize + roadWidth / 2 + roadSideOffset);
+        tree2.textureVariant = rand() % 3;
+        tree2.scale = 15.0f + (rand() % 8);
+        tree2.rotation = (rand() % 360);
+        tree2.radius = tree2.scale * 0.3f;
+        tree2.height = tree2.scale;
+        if (isPositionClearForTree(tree2.position)) {
+            trees.push_back(tree2);
+        }
+    }
+    
+    // ===== ADDITIONAL FOREST COVERAGE in surrounding areas =====
+    const int numRandomTrees = 300;  // Additional trees for natural forest
+    const float forestSize = 1500.0f;
     const float minDistFromAirport = 300.0f;
-    const float minDistFromRunway = 200.0f;
-    const float minDistFromBuilding = 30.0f;
-    const float minTreeSpacing = 8.0f;  // Trees shouldn't be too close to each other
+    const float minTreeSpacing = 10.0f;
     
     int attempts = 0;
-    const int maxAttempts = numTrees * 10;  // Try up to 10x the target number
+    const int maxAttempts = numRandomTrees * 10;
     
-    while (trees.size() < numTrees && attempts < maxAttempts) {
+    while (trees.size() < (size_t)(trees.size() + numRandomTrees) && attempts < maxAttempts) {
         attempts++;
         
         CardboardTree tree;
         
-        // Random position in large area, avoiding center (where airport is)
+        // Random position in large area, avoiding airport and city center
         float angle = (rand() % 360) * 3.14159f / 180.0f;
         float distance = minDistFromAirport + (rand() % (int)(forestSize - minDistFromAirport));
         
         tree.position.x = runwayPosition.x + cos(angle) * distance;
-        tree.position.y = 0.0f;  // Ground level
+        tree.position.y = 0.0f;
         tree.position.z = runwayPosition.z + sin(angle) * distance;
         
         // Check if position is clear
@@ -2372,13 +2869,93 @@ void Level2::initTrees() {
         if (tooClose) continue;
         
         // Random tree variation
-        tree.textureVariant = rand() % 3;  // 0, 1, or 2
-        tree.scale = 15.0f + (rand() % 10);  // 15-25 units tall
-        tree.rotation = (rand() % 360);  // Random rotation
-        
+        tree.textureVariant = rand() % 3;
+        tree.scale = 15.0f + (rand() % 10);
+        tree.rotation = (rand() % 360);
+        tree.radius = tree.scale * 0.3f;
+        tree.height = tree.scale;
+
         trees.push_back(tree);
     }
-    
+
+    // ===== FARM/FOREST PATTERN AROUND WAREHOUSES =====
+    // Add organized tree rows and clusters around warehouse buildings (outskirts)
+    for (size_t w = 0; w < buildings.size(); w++) {
+        if (buildings[w].landmarkType != 6) continue;  // Only process warehouses
+
+        Vector3f warehousePos = buildings[w].position;
+        float warehouseRot = buildings[w].rotation * 3.14159f / 180.0f;
+
+        // Create tree lines along the sides of warehouses (windbreaks/farm boundaries)
+        const float lineOffset = 60.0f;  // Distance from warehouse
+        const float treeLineSpacing = 12.0f;  // Spacing between trees in line
+        const int treesPerLine = 8;
+
+        // Create 4 tree lines around each warehouse (farm field boundaries)
+        for (int side = 0; side < 4; side++) {
+            float sideAngle = warehouseRot + (side * 3.14159f / 2.0f);
+            float perpAngle = sideAngle + 3.14159f / 2.0f;
+
+            // Start position for this line
+            Vector3f lineStart;
+            lineStart.x = warehousePos.x + cos(sideAngle) * lineOffset;
+            lineStart.z = warehousePos.z + sin(sideAngle) * lineOffset;
+
+            // Place trees along the line
+            for (int t = 0; t < treesPerLine; t++) {
+                CardboardTree farmTree;
+                float offset = (t - treesPerLine / 2) * treeLineSpacing;
+
+                farmTree.position.x = lineStart.x + cos(perpAngle) * offset;
+                farmTree.position.y = 0.0f;
+                farmTree.position.z = lineStart.z + sin(perpAngle) * offset;
+
+                // Check if position is valid
+                if (!isPositionClearForTree(farmTree.position)) continue;
+
+                // Uniform farm trees - slightly smaller and more consistent
+                farmTree.textureVariant = rand() % 3;
+                farmTree.scale = 12.0f + (rand() % 5);  // More uniform size
+                farmTree.rotation = (rand() % 360);
+                farmTree.radius = farmTree.scale * 0.3f;
+                farmTree.height = farmTree.scale;
+
+                trees.push_back(farmTree);
+            }
+        }
+
+        // Add a small forest cluster near each warehouse (natural forest patches)
+        const int clusterTrees = 15;
+        const float clusterRadius = 80.0f;
+        const float clusterOffset = 120.0f;  // Distance from warehouse
+
+        // Place cluster in a random direction from warehouse
+        float clusterAngle = (rand() % 360) * 3.14159f / 180.0f;
+        Vector3f clusterCenter;
+        clusterCenter.x = warehousePos.x + cos(clusterAngle) * clusterOffset;
+        clusterCenter.z = warehousePos.z + sin(clusterAngle) * clusterOffset;
+
+        for (int c = 0; c < clusterTrees; c++) {
+            CardboardTree clusterTree;
+            float treeAngle = (rand() % 360) * 3.14159f / 180.0f;
+            float treeDist = (rand() % (int)clusterRadius);
+
+            clusterTree.position.x = clusterCenter.x + cos(treeAngle) * treeDist;
+            clusterTree.position.y = 0.0f;
+            clusterTree.position.z = clusterCenter.z + sin(treeAngle) * treeDist;
+
+            if (!isPositionClearForTree(clusterTree.position)) continue;
+
+            // Forest trees - varied sizes
+            clusterTree.textureVariant = rand() % 3;
+            clusterTree.scale = 14.0f + (rand() % 12);
+            clusterTree.rotation = (rand() % 360);
+            clusterTree.radius = clusterTree.scale * 0.3f;
+            clusterTree.height = clusterTree.scale;
+
+            trees.push_back(clusterTree);
+        }
+    }
 }
 
 bool Level2::isPositionClearForTree(const Vector3f& pos) {

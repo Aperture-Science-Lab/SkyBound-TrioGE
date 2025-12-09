@@ -64,4 +64,4 @@ public:
 
 };
 
-#endif GLTEXTURE_H
+#endif // GLTEXTURE_H

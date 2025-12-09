@@ -463,6 +463,173 @@ void ExplosionSystem::render(const Vector3f& cameraPosition) {
     glPopAttrib();
 }
 
+// ============ JET TRAIL SYSTEM IMPLEMENTATION ============
+
+JetTrailSystem::JetTrailSystem() 
+    : textureID(0), spawnTimer(0.0f), spawnInterval(0.05f) {
+    particles.reserve(200);
+}
+
+JetTrailSystem::~JetTrailSystem() {
+    if (textureID != 0) {
+        glDeleteTextures(1, &textureID);
+    }
+}
+
+bool JetTrailSystem::loadTrailTexture(const char* filename) {
+    FILE* file = NULL;
+    fopen_s(&file, filename, "rb");
+    if (!file) return false;
+    
+    unsigned char header[54];
+    if (fread(header, 1, 54, file) != 54 || header[0] != 'B' || header[1] != 'M') {
+        fclose(file);
+        return false;
+    }
+    
+    int width = *(int*)&header[18];
+    int height = *(int*)&header[22];
+    int dataOffset = *(int*)&header[10];
+    
+    if (width <= 0 || height <= 0) {
+        fclose(file);
+        return false;
+    }
+    
+    int size = width * height * 4;
+    unsigned char* data = new unsigned char[size];
+    
+    fseek(file, dataOffset, SEEK_SET);
+    // Simple read assuming 24/32bpp, similar logic to explosion loader needed for robustness
+    // For simplicity here, we'll use procedural generation if this fails or just proceed
+    // But since we want "AAA" look, let's generate a high quality procedural texture instead of relying on file
+    
+    fclose(file);
+    delete[] data;
+    return false; // Fallback to procedural
+}
+
+void JetTrailSystem::init(int maxParticles) {
+    particles.resize(maxParticles);
+    for (size_t i = 0; i < particles.size(); i++) {
+        particles[i].active = false;
+    }
+    
+    // Generate procedural smoke/trail texture
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    
+    const int size = 64;
+    unsigned char* texData = new unsigned char[size * size * 4];
+    
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            float dx = (x - size/2) / (float)(size/2);
+            float dy = (y - size/2) / (float)(size/2);
+            float d = sqrt(dx*dx + dy*dy);
+            
+            float alpha = 1.0f - d;
+            if (alpha < 0) alpha = 0;
+            alpha = pow(alpha, 2.0f); // Soft falloff
+            
+            int idx = (y * size + x) * 4;
+            // White smoke
+            texData[idx+0] = 200;
+            texData[idx+1] = 200;
+            texData[idx+2] = 220; // Slight blue tint
+            texData[idx+3] = (unsigned char)(alpha * 255);
+        }
+    }
+    
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, texData);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    
+    delete[] texData;
+}
+
+void JetTrailSystem::diffEmit(const Vector3f& position, const Vector3f& velocity) {
+    // Find free particle
+    for (size_t i = 0; i < particles.size(); i++) {
+        if (!particles[i].active) {
+            particles[i].active = true;
+            particles[i].position = position;
+            particles[i].life = 1.5f; // Short life
+            particles[i].maxLife = 1.5f;
+            particles[i].size = 2.0f; // Start small
+            particles[i].alpha = 0.5f;
+            break;
+        }
+    }
+}
+
+void JetTrailSystem::update(float deltaTime) {
+    for (size_t i = 0; i < particles.size(); i++) {
+        if (particles[i].active) {
+            JetTrailParticle& p = particles[i];
+            
+            p.life -= deltaTime;
+            if (p.life <= 0) {
+                p.active = false;
+                continue;
+            }
+            
+            // Expand
+            p.size += 15.0f * deltaTime;
+            
+            // Fade out
+            p.alpha = (p.life / p.maxLife) * 0.4f;
+        }
+    }
+}
+
+void JetTrailSystem::render() {
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_LIGHTING);
+    glDepthMask(GL_FALSE);
+    
+    // Billboard setup
+    float modelview[16];
+    glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
+    Vector3f right(modelview[0], modelview[4], modelview[8]);
+    Vector3f up(modelview[1], modelview[5], modelview[9]);
+    
+    glBegin(GL_QUADS);
+    for (size_t i = 0; i < particles.size(); i++) {
+        if (particles[i].active) {
+            const JetTrailParticle& p = particles[i];
+            float hs = p.size * 0.5f;
+            
+            Vector3f v1 = p.position - right * hs - up * hs;
+            Vector3f v2 = p.position + right * hs - up * hs;
+            Vector3f v3 = p.position + right * hs + up * hs;
+            Vector3f v4 = p.position - right * hs + up * hs;
+            
+            glColor4f(1.0f, 1.0f, 1.0f, p.alpha);
+            
+            glTexCoord2f(0, 0); glVertex3f(v1.x, v1.y, v1.z);
+            glTexCoord2f(1, 0); glVertex3f(v2.x, v2.y, v2.z);
+            glTexCoord2f(1, 1); glVertex3f(v3.x, v3.y, v3.z);
+            glTexCoord2f(0, 1); glVertex3f(v4.x, v4.y, v4.z);
+        }
+    }
+    glEnd();
+    
+    glDepthMask(GL_TRUE);
+    glEnable(GL_LIGHTING);
+}
+
+void JetTrailSystem::reset() {
+    for (size_t i = 0; i < particles.size(); i++) {
+        particles[i].active = false;
+    }
+}
+
 // ============ PARTICLE EFFECTS MANAGER IMPLEMENTATION ============
 
 ParticleEffects::ParticleEffects() {
@@ -474,11 +641,13 @@ ParticleEffects::~ParticleEffects() {
 void ParticleEffects::init() {
     wind.init(50);
     explosion.init();
+    jetTrail.init();
 }
 
 void ParticleEffects::update(float deltaTime, const Vector3f& cameraPos, const Vector3f& forward, float speed) {
     wind.update(deltaTime, cameraPos, forward, speed);
     explosion.update(deltaTime);
+    jetTrail.update(deltaTime);
 }
 
 void ParticleEffects::renderWind(const Vector3f& forward, float speed) {
@@ -500,4 +669,13 @@ bool ParticleEffects::isExplosionActive() const {
 void ParticleEffects::reset() {
     wind.reset();
     explosion.reset();
+    jetTrail.reset();
+}
+
+void ParticleEffects::renderJetTrail() {
+    jetTrail.render();
+}
+
+void ParticleEffects::emitJetTrail(const Vector3f& position, const Vector3f& velocity) {
+    jetTrail.diffEmit(position, velocity);
 }

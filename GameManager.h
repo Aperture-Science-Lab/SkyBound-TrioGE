@@ -25,7 +25,9 @@ public:
     // Input forwarding
     void handleKeyboard(unsigned char key, bool pressed);
     void handleKeyboardUp(unsigned char key);
+    void handleSpecialKeys(int key, int x, int y);
     void handleMouse(int x, int y);
+    void handleMouseClick(int button, int state, int x, int y);
     
     // Getters
     Level* getCurrentLevel() const { return currentLevel; }

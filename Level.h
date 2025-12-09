@@ -14,7 +14,9 @@ public:
     // Input handling
     virtual void handleKeyboard(unsigned char key, bool pressed) = 0;
     virtual void handleKeyboardUp(unsigned char key) = 0;
+    virtual void handleSpecialKeys(int key, int x, int y) {}
     virtual void handleMouse(int x, int y) = 0;
+    virtual void handleMouseClick(int button, int state, int x, int y) {}
     
     // Utility methods
     virtual void onEnter();

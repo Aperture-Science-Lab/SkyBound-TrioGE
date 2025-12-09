@@ -200,4 +200,4 @@ private:
 	void CalculateNormals();
 };
 
-#endif MODEL_3DS_H
+#endif // MODEL_3DS_H

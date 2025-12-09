@@ -22,6 +22,7 @@ public:
     void onExit() override;
     
     static int getSelectedPlane() { return selectedPlane; }
+    static void setSelectedPlane(int plane) { if (plane >= 0 && plane < 3) selectedPlane = plane; }
     
 private:
     void renderPlanePreview(int planeIndex, float xPos, float yPos, float zPos);
@@ -29,11 +30,13 @@ private:
     
     Model_3DS model_plane1;
     Model_3DS model_plane2;
+    Model_3DS model_plane3;
 
     GLuint tex_plane1;
     GLuint tex_plane2;
+    GLuint tex_plane3;
     
-    static int selectedPlane;  // 0 = plane1, 1 = plane2
+    static int selectedPlane;  // 0 = plane1, 1 = plane2, 2 = plane3
     int highlightedPlane;      // Currently highlighted plane
     
     float rotationAngle;

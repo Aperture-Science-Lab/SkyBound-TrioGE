@@ -343,17 +343,39 @@ void FlightController::drawPlane(bool showWingLights) {
     };
     
     glMultMatrixf(rotMatrix);
-    glScalef(1, 1, 1);
+    
+    // Model-specific scaling - plane 3 is MUCH larger than others
+    bool isPlane3 = loadedModelPath.find("plane 3") != std::string::npos;
+    bool isPlane2 = loadedModelPath.find("plane 2") != std::string::npos;
+    
+    if (isPlane3) {
+        glScalef(0.01f, 0.01f, 0.01f);  // Plane 3 is ~1000x larger than normal
+    } else {
+        glScalef(1, 1, 1);
+    }
 
     // Model-specific orientation fixes
-    bool isPlane2 = loadedModelPath.find("plane 2") != std::string::npos;
     if (isPlane2) {
         glRotatef(-90.0f, 1, 0, 0);   // correct pitch (was flipping upside-down)
         glRotatef(180.0f, 0, 1, 0);
         glRotatef(180.0f, 0, 1, 0);  // plane 2 faces sideways in its source model
     }
+    
+    if (isPlane3) {
+        glRotatef(180.0f, 0, 1, 0);  // Rotate plane 3 to show back to player
+    }
 
     glRotatef(90, 1, 0, 0);
+    
+    // Set material properties for aircraft (metallic paint with moderate shine)
+    GLfloat planeAmbient[] = { 0.25f, 0.25f, 0.28f, 1.0f };
+    GLfloat planeDiffuse[] = { 0.6f, 0.6f, 0.65f, 1.0f };
+    GLfloat planeSpecular[] = { 0.8f, 0.8f, 0.85f, 1.0f };
+    GLfloat planeShininess = 50.0f;  // Shiny metallic paint
+    glMaterialfv(GL_FRONT, GL_AMBIENT, planeAmbient);
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, planeDiffuse);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, planeSpecular);
+    glMaterialf(GL_FRONT, GL_SHININESS, planeShininess);
     
     model.Draw();
     

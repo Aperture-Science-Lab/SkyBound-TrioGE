@@ -26,7 +26,9 @@ struct FuelCollectable {
 // Structure for Building Obstacles
 struct BuildingObstacle {
     Vector3f position;
-    int modelIndex;       // Which building model to use (0-9)
+    int modelIndex;       // Which building model to use (0-9, or -1 for landmark)
+    int landmarkType;     // 0=oldHotel, 1=laPazTower, 2=tower, 3=skyscraper02, 4=empireTrust, 5=stadium
+    bool isLandmark;      // true if this is a unique landmark building
     float rotation;       // Y-axis rotation
     float scale;          // Scale factor
     float width;          // Collision box width
@@ -40,6 +42,8 @@ struct CardboardTree {
     int textureVariant;   // 0, 1, or 2 for different tree textures
     float scale;          // Size variation
     float rotation;       // Y-axis rotation for visual variety
+    float radius;         // Collision radius (cylinder)
+    float height;         // Collision height
 };
 
 class Level2 : public Level {
@@ -67,12 +71,22 @@ private:
     Model_3DS model_fuelContainer;  // Fuel container model
     Model_3DS model_buildings[10];  // 10 different building models
     Model_3DS model_airportTerminal; // Airport terminal model
+    
+    // Unique landmark buildings for city center
+    Model_3DS model_oldHotel;
+    Model_3DS model_laPazTower;
+    Model_3DS model_tower;
+    Model_3DS model_skyscraper02;
+    Model_3DS model_empireTrust;
+    Model_3DS model_stadium;
+    Model_3DS model_warehouse;       // Warehouse for outskirts/farms
     GLuint tex_airportTerminal;      // Airport terminal texture
     GLuint tex_ground;              // Ground texture (changed from GLTexture to GLuint)
     GLuint tex_runway;              // Runway texture
     GLuint tex_grass;               // Grass billboard texture
     GLuint tex_fuelContainer;       // Fuel container texture
     GLuint tex_tree[3];             // Three tree texture variations
+    GLuint tex_warehouse;           // Warehouse texture (Steel_C.bmp)
     
     // Optimized Billboard Grass System (no 3D models - much faster)
     static const int GRASS_GRID_SIZE = 12;      // Grid cells around player (reduced)

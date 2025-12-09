@@ -647,6 +647,7 @@ void SkySystem::renderLensFlare(const Vector3f& playerPosition, const Vector3f& 
     
     glDisable(GL_LIGHTING);
     glDisable(GL_DEPTH_TEST);
+    glDisable(GL_FOG); // Fix for blocky lens flare
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glEnable(GL_TEXTURE_2D);

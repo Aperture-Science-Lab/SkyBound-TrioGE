@@ -94,6 +94,7 @@
     <ClCompile Include="PlaneSelectionLevel.cpp" />
     <ClCompile Include="Model_3DS.cpp" />
     <ClCompile Include="OpenGLMeshLoader.cpp" />
+    <ClCompile Include="OptionsMenu.cpp" />
     <ClCompile Include="FlightController.cpp" />
     <ClCompile Include="ParticleEffects.cpp" />
     <ClCompile Include="ShadowSystem.cpp" />
@@ -112,6 +113,7 @@
     <ClInclude Include="Level1.h" />
     <ClInclude Include="Level2.h" />
     <ClInclude Include="PlaneSelectionLevel.h" />
+    <ClInclude Include="OptionsMenu.h" />
     <ClInclude Include="Model_3DS.h" />
     <ClInclude Include="FlightController.h" />
     <ClInclude Include="ParticleEffects.h" />

@@ -81,6 +81,40 @@ private:
     bool loadExplosionTexture(const char* filename);
 };
 
+// ============ JET TRAIL PARTICLE SYSTEM ============
+struct JetTrailParticle {
+    Vector3f position;
+    float size;
+    float alpha;
+    float life;
+    float maxLife;
+    bool active;
+};
+
+class JetTrailSystem {
+public:
+    JetTrailSystem();
+    ~JetTrailSystem();
+
+    void init(int maxParticles = 200);
+    void update(float deltaTime);
+    void render();
+    void reset();
+
+    // Spawn a trail particle at the given position
+    void diffEmit(const Vector3f& position, const Vector3f& velocity);
+
+private:
+    std::vector<JetTrailParticle> particles;
+    unsigned int textureID;
+    float spawnTimer;
+    float spawnInterval;
+    
+    // Helper to load texture
+    bool loadTrailTexture(const char* filename);
+};
+
+
 // ============ COMBINED PARTICLE EFFECTS MANAGER ============
 class ParticleEffects {
 public:
@@ -111,4 +145,11 @@ public:
     // Individual systems (for direct access if needed)
     WindSystem wind;
     ExplosionSystem explosion;
+    JetTrailSystem jetTrail;
+
+    // Render jet trail
+    void renderJetTrail();
+
+    // Emit jet trail from a plane position
+    void emitJetTrail(const Vector3f& position, const Vector3f& velocity);
 };

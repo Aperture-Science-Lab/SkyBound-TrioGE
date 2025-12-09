@@ -143,9 +143,21 @@ void GameManager::handleKeyboardUp(unsigned char key) {
     }
 }
 
+void GameManager::handleSpecialKeys(int key, int x, int y) {
+    if (currentLevel && currentLevel->isActive()) {
+        currentLevel->handleSpecialKeys(key, x, y);
+    }
+}
+
 void GameManager::handleMouse(int x, int y) {
     if (currentLevel && currentLevel->isActive()) {
         currentLevel->handleMouse(x, y);
+    }
+}
+
+void GameManager::handleMouseClick(int button, int state, int x, int y) {
+    if (currentLevel && currentLevel->isActive()) {
+        currentLevel->handleMouseClick(button, state, x, y);
     }
 }
 

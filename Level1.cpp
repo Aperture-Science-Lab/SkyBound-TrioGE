@@ -235,15 +235,8 @@ Level1::~Level1() {
 void Level1::init() {
     flightSim = new FlightController();
     
-    // Load the selected plane model and texture
-    int selectedPlane = PlaneSelectionLevel::getSelectedPlane();
-    if (selectedPlane == 1) {
-        // Load plane 2
-        flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
-    } else {
-        // Load plane 1 (default)
-        flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
-    }
+    // Plane loading moved to onEnter to support switching planes dynamically
+    // flightSim->loadModelWithTexture is called in onEnter()
     
     // Start plane on the carrier deck - stationary, ready for takeoff
     // Position plane at the back of the carrier deck
@@ -269,6 +262,7 @@ void Level1::init() {
     initRings();
     initToolkits();
     initRockets();
+    initBoats();
     
     gameTimer = maxGameTime;
     score = 0;
@@ -306,6 +300,12 @@ void Level1::loadAssets() {
     // Load rocket model
     model_rocket.Load("Models/rocket/Rocket.3ds");
 
+    // Load boat model
+    model_boat.Load("Models/boat/Boat.3ds");
+
+    // Load humvee model
+    model_humvee.Load("Models/humvees/HUMVEE M242.3ds");
+
     // Load rocket texture
     if (!loadGroundTexture(&tex_rocket, "Models/rocket/Military Rocket Textures/Military Rocket_mat_BaseColor.bmp")) {
         printf("Failed to load rocket texture, using fallback\n");
@@ -317,6 +317,44 @@ void Level1::loadAssets() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     }
     
+    // Load boat texture
+    if (!loadGroundTexture(&tex_boat, "Models/boat/MEtal Boat.bmp")) {
+        printf("Failed to load boat texture, using fallback\n");
+        glGenTextures(1, &tex_boat);
+        glBindTexture(GL_TEXTURE_2D, tex_boat);
+        unsigned char grayBoat[3] = { 120, 120, 130 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, grayBoat);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+
+    // Force boat materials to use boat texture
+    if (tex_boat != 0) {
+        for (int m = 0; m < model_boat.numMaterials; ++m) {
+            model_boat.Materials[m].tex.texture[0] = tex_boat;
+            model_boat.Materials[m].textured = true;
+        }
+    }
+
+    // Load humvee texture
+    if (!loadGroundTexture(&tex_humvee, "Models/humvees/texture.bmp")) {
+        printf("Failed to load humvee texture, using fallback\n");
+        glGenTextures(1, &tex_humvee);
+        glBindTexture(GL_TEXTURE_2D, tex_humvee);
+        unsigned char olive[3] = { 85, 90, 70 };
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, olive);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+
+    // Force humvee materials to use humvee texture
+    if (tex_humvee != 0) {
+        for (int m = 0; m < model_humvee.numMaterials; ++m) {
+            model_humvee.Materials[m].tex.texture[0] = tex_humvee;
+            model_humvee.Materials[m].textured = true;
+        }
+    }
+
     // Load container textures
     if (!loadGroundTexture(&tex_container_red, "Models/containor/red-corrugated-surface.bmp")) {
         printf("Failed to load red container texture\n");
@@ -338,6 +376,28 @@ void Level1::loadAssets() {
         printf("Failed to load tent texture\n");
     }
     
+    // Load Lighthouse Textures (New)
+    // Use loadGroundTexture which is more robust than loadBMP
+    if (!loadGroundTexture(&tex_lighthouse_wall, "textures/concert.bmp")) {
+         printf("Failed to load lighthouse wall, using fallback\n");
+         glGenTextures(1, &tex_lighthouse_wall);
+         glBindTexture(GL_TEXTURE_2D, tex_lighthouse_wall);
+         unsigned char white[3] = { 255, 255, 255 };
+         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, white);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    
+    if (!loadGroundTexture(&tex_lighthouse_top, "models/containor/red-corrugated-surface.bmp")) {
+         printf("Failed to load lighthouse top, using fallback\n");
+         glGenTextures(1, &tex_lighthouse_top);
+         glBindTexture(GL_TEXTURE_2D, tex_lighthouse_top);
+         unsigned char red[3] = { 200, 50, 50 };
+         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, red);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+
     // Load tank textures
     auto loadTankTex = [&](GLuint* dst, const char* p1, const char* p2) {
         if (!loadGroundTexture(dst, p1)) {
@@ -536,6 +596,75 @@ void Level1::initRockets() {
     rocketSpawnTimer = 3.0f;  // First rocket after 3 seconds
 }
 
+void Level1::initBoats() {
+    boats.clear();
+
+    auto addBoat = [&](const Vector3f& start, const Vector3f& end, float speed,
+               bool moving, float yawDeg, float phase, float bobSpeed, float bobAmount) {
+    BoatInstance boat;
+    boat.startPosition = start;
+    boat.endPosition = moving ? end : start;
+    boat.position = start;
+    boat.phase = phase;
+    boat.bobSpeed = bobSpeed;
+    boat.bobAmount = bobAmount;
+    boat.isMoving = moving;
+    boat.movingForward = true;
+    boat.moveSpeed = moving ? speed : 0.0f;
+
+    float yawRad = yawDeg * 3.14159f / 180.0f;
+    boat.forwardDir = Vector3f(cos(yawRad), 0.0f, sin(yawRad));
+
+    Vector3f path = boat.endPosition - boat.startPosition;
+    boat.pathLength = sqrt(path.x * path.x + path.y * path.y + path.z * path.z);
+    if (boat.pathLength > 0.001f) {
+        boat.forwardDir = Vector3f(path.x / boat.pathLength, path.y / boat.pathLength, path.z / boat.pathLength);
+    }
+
+    boats.push_back(boat);
+    };
+
+    float baseY = waterLevel + 8.0f;
+
+    // Stationary boats near port (away from carrier)
+    addBoat(Vector3f(360.0f, baseY, -300.0f),
+        Vector3f(360.0f, baseY, -300.0f),
+        0.0f, false, 90.0f, 1.2f, 1.2f, 0.6f);
+
+    addBoat(Vector3f(320.0f, baseY, 240.0f),
+        Vector3f(320.0f, baseY, 240.0f),
+        0.0f, false, 45.0f, 2.1f, 1.6f, 0.65f);
+
+    // Moving boats heading toward rings (rings start at z=200 and go to z~3000)
+    // Carrier is at x=0, z=-100, so keep boats away from that area
+    // Boats on different X lanes to avoid collision
+
+    // Boat 1: Left lane, heading toward rings
+    addBoat(Vector3f(-180.0f, baseY, -400.0f),
+        Vector3f(-180.0f, baseY, 2800.0f),
+        20.0f, true, 0.0f, 0.0f, 1.0f, 0.5f);
+
+    // Boat 2: Far left lane, heading toward rings
+    addBoat(Vector3f(-320.0f, baseY, -600.0f),
+        Vector3f(-320.0f, baseY, 2600.0f),
+        18.0f, true, 0.0f, 1.5f, 1.1f, 0.55f);
+
+    // Boat 3: Right side, heading toward rings
+    addBoat(Vector3f(180.0f, baseY, -500.0f),
+        Vector3f(180.0f, baseY, 2700.0f),
+        22.0f, true, 0.0f, 0.8f, 0.9f, 0.5f);
+
+    // Boat 4: Far right, heading toward rings
+    addBoat(Vector3f(280.0f, baseY, -300.0f),
+        Vector3f(280.0f, baseY, 2500.0f),
+        16.0f, true, 0.0f, 2.0f, 1.2f, 0.6f);
+
+    // Boat 5: Center-left diagonal path
+    addBoat(Vector3f(-100.0f, baseY, -700.0f),
+        Vector3f(-50.0f, baseY, 2400.0f),
+        19.0f, true, 0.0f, 0.5f, 1.0f, 0.55f);
+}
+
 void Level1::update(float deltaTime) {
     if (!active || !flightSim) return;
     
@@ -667,6 +796,12 @@ void Level1::update(float deltaTime) {
         // Update particle effects
         particleEffects.update(deltaTime, flightSim->player.position,
                                flightSim->player.forward, flightSim->getSpeed());
+                               
+        // Jet Trail for Plane 3 (Stealth Jet - selection index 2)
+        if (flightSim && PlaneSelectionLevel::getSelectedPlane() == 2 && flightSim->getSpeed() > 5.0f) {
+           Vector3f offset = flightSim->player.forward * -2.0f; // Behind plane
+           particleEffects.emitJetTrail(flightSim->player.position + offset, Vector3f(0,0,0));
+        }
         
         // Update shooting system
         shootingSystem.update(deltaTime);
@@ -675,6 +810,7 @@ void Level1::update(float deltaTime) {
         updateRings(deltaTime);
         updateToolkits(deltaTime);
         updateRockets(deltaTime);
+        updateBoats(deltaTime);
         
         // Check collisions (rocket collisions only if not spawn protected)
         checkRingPassage();
@@ -733,6 +869,33 @@ void Level1::updateRockets(float deltaTime) {
             // Deactivate if too old or too far
             if (rocket.lifetime <= 0.0f) {
                 rocket.active = false;
+            }
+        }
+    }
+}
+
+void Level1::updateBoats(float deltaTime) {
+    float time = ringTimer;
+
+    for (auto& boat : boats) {
+        float baseY = boat.startPosition.y;
+        float bob = sin(time * boat.bobSpeed + boat.phase) * boat.bobAmount;
+        boat.position.y = baseY + bob;
+
+        if (boat.isMoving && boat.pathLength > 0.001f) {
+            Vector3f dir = boat.forwardDir * (boat.movingForward ? 1.0f : -1.0f);
+            boat.position = boat.position + dir * (boat.moveSpeed * deltaTime);
+
+            float traveled = (boat.position.x - boat.startPosition.x) * boat.forwardDir.x +
+                             (boat.position.y - boat.startPosition.y) * boat.forwardDir.y +
+                             (boat.position.z - boat.startPosition.z) * boat.forwardDir.z;
+
+            if (boat.movingForward && traveled >= boat.pathLength) {
+                boat.position = boat.endPosition;
+                boat.movingForward = false;
+            } else if (!boat.movingForward && traveled <= 0.0f) {
+                boat.position = boat.startPosition;
+                boat.movingForward = true;
             }
         }
     }
@@ -798,8 +961,8 @@ void Level1::checkRingPassage() {
             ring.passed = true;
             ringsPassedCount++;
 
-            // Check if this is the golden ring and all other rings are passed
-            if (ring.isGolden && ringsPassedCount >= totalRings) {
+            // Check if this is the golden ring
+            if (ring.isGolden) {
                 // All rings passed including golden ring - switch to Level 2
                 score += 500;  // Golden ring bonus
                 score += (int)(gameTimer * 10);  // Time bonus
@@ -807,6 +970,8 @@ void Level1::checkRingPassage() {
 
                 // Trigger level switch immediately to Level 2
                 levelComplete = true;
+				showLevelComplete = true;
+                GameManager::getInstance().switchToLevel("level2");
                 return;
             }
             else {
@@ -844,7 +1009,8 @@ void Level1::checkRocketCollision() {
     if (!flightSim || flightSim->isCrashed) return;
     
     Vector3f planePos = flightSim->player.position;
-    float hitRadius = 5.0f;
+    // Increased collision radius significantly (hurt box) to make rockets deadly
+    float hitRadius = 25.0f; 
     
     for (auto& rocket : rockets) {
         if (!rocket.active) continue;
@@ -869,7 +1035,7 @@ void Level1::checkRocketCollision() {
 
 void Level1::checkBulletRocketCollision() {
     // Check if any bullets hit any rockets - if so, explode the rocket
-    float hitRadius = 8.0f;  // Collision radius for bullet-rocket
+    float hitRadius = 20.0f;  // Collision radius for bullet-rocket (Increased as requested)
     
     // Get bullets from shooting system (need to access internal data)
     // Since ShootingSystem doesn't expose bullets directly, we'll check manually
@@ -992,6 +1158,20 @@ void Level1::render() {
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LEQUAL);
     glClearDepth(1.0f);
+    
+    // ===== ENHANCED GRAPHICS SETTINGS =====
+    glShadeModel(GL_SMOOTH);  // Smooth Gouraud shading
+    glEnable(GL_NORMALIZE);   // Normalize normals for proper lighting after scaling
+    glEnable(GL_COLOR_MATERIAL);  // Use glColor with lighting
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+    glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_TRUE);  // Better specular
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_FALSE);  // One-sided lighting
+    
+    // Anti-aliasing hints
+    glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+    glHint(GL_POLYGON_SMOOTH_HINT, GL_NICEST);
+    
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_LIGHTING);
     
@@ -1015,13 +1195,177 @@ void Level1::render() {
         skySystem.renderClouds(flightSim->player.position);
     }
     
-    GLfloat lightIntensity[] = { 0.7f, 0.7f, 0.7f, 1.0f };
-    GLfloat lightPosition[] = { 0.0f, 100.0f, 0.0f, 0.0f };
-    glLightfv(GL_LIGHT0, GL_POSITION, lightPosition);
-    glLightfv(GL_LIGHT0, GL_AMBIENT, lightIntensity);
+    // ===== AAA LIGHTING SYSTEM =====
+    // Get time-of-day lighting from sky system
+    DayLighting lighting = skySystem.getCurrentLighting();
+    bool isNight = skySystem.isNightTime();
+    
+    // GL_LIGHT0: Directional Sun/Moon Light
+    GLfloat sunDirection[] = { 0.3f, -0.7f, -0.5f, 0.0f };  // Directional (w=0)
+    GLfloat sunAmbient[] = { 0.3f, 0.3f, 0.35f, 1.0f };
+    GLfloat sunDiffuse[] = { 0.9f, 0.85f, 0.7f, 1.0f };  // Warm daylight
+    GLfloat sunSpecular[] = { 1.0f, 0.95f, 0.8f, 1.0f };
+    
+    // Dynamic time-of-day adjustment
+    if (isNight) {
+        // Cool blue moonlight
+        sunAmbient[0] = 0.1f; sunAmbient[1] = 0.12f; sunAmbient[2] = 0.18f;
+        sunDiffuse[0] = 0.2f; sunDiffuse[1] = 0.25f; sunDiffuse[2] = 0.4f;
+        sunSpecular[0] = 0.3f; sunSpecular[1] = 0.35f; sunSpecular[2] = 0.5f;
+    } else if (lighting.sunHeight < 0.3f) {
+        // Sunrise/sunset - orange/red tint
+        float t = lighting.sunHeight / 0.3f;
+        sunDiffuse[0] = 1.0f;
+        sunDiffuse[1] = 0.5f + t * 0.35f;
+        sunDiffuse[2] = 0.3f + t * 0.4f;
+    }
+    
+    glEnable(GL_LIGHT0);
+    glLightfv(GL_LIGHT0, GL_POSITION, sunDirection);
+    glLightfv(GL_LIGHT0, GL_AMBIENT, sunAmbient);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, sunDiffuse);
+    glLightfv(GL_LIGHT0, GL_SPECULAR, sunSpecular);
+    
+    // GL_LIGHT1: Port Area ROTATING Searchlight (Lighthouse effect) - MEETS LIGHT ANIMATION CRITERIA
+    // Port is at x=450, extends from z=-1500 to z=1500
+    
+    // Shared ambient for port area lights
+    GLfloat portAmbient[] = { 0.05f, 0.05f, 0.05f, 1.0f };
+    
+    if (isNight) {
+        float time = ringTimer * 2.0f; // Rotation speed
+        // Positioned high up
+        GLfloat portLightPos[] = { 500.0f, 60.0f, 0.0f, 1.0f };
+        
+        // Rotating direction
+        GLfloat spotDir[] = { cos(time), -0.5f, sin(time) };
+        
+        GLfloat portDiffuse[] = { 1.0f, 0.9f, 0.7f, 1.0f };  // Stronger beam
+        GLfloat portSpecular[] = { 1.0f, 1.0f, 0.9f, 1.0f };
+        
+        glEnable(GL_LIGHT1);
+        glLightfv(GL_LIGHT1, GL_POSITION, portLightPos);
+        glLightfv(GL_LIGHT1, GL_SPOT_DIRECTION, spotDir);
+        glLightfv(GL_LIGHT1, GL_AMBIENT, portAmbient);
+        glLightfv(GL_LIGHT1, GL_DIFFUSE, portDiffuse);
+        glLightfv(GL_LIGHT1, GL_SPECULAR, portSpecular);
+        
+        // Make it a spotlight
+        glLightf(GL_LIGHT1, GL_SPOT_CUTOFF, 30.0f);
+        glLightf(GL_LIGHT1, GL_SPOT_EXPONENT, 20.0f);
+        
+        // Attenuation for realistic falloff
+        glLightf(GL_LIGHT1, GL_CONSTANT_ATTENUATION, 1.0f);
+        glLightf(GL_LIGHT1, GL_LINEAR_ATTENUATION, 0.01f);
+        glLightf(GL_LIGHT1, GL_QUADRATIC_ATTENUATION, 0.001f);
+    } else {
+        glDisable(GL_LIGHT1);
+    }
+    
+    // GL_LIGHT2: Carrier Deck Lights
+    GLfloat carrierLightPos[] = { carrierPosition.x, carrierPosition.y + 15.0f, carrierPosition.z, 1.0f };
+    GLfloat carrierDiffuse[] = { 0.9f, 0.9f, 0.95f, 1.0f };  // Bright white deck lights
+    GLfloat carrierSpecular[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    
+    if (isNight) {
+        glEnable(GL_LIGHT2);
+        glLightfv(GL_LIGHT2, GL_POSITION, carrierLightPos);
+        glLightfv(GL_LIGHT2, GL_AMBIENT, portAmbient);
+        glLightfv(GL_LIGHT2, GL_DIFFUSE, carrierDiffuse);
+        glLightfv(GL_LIGHT2, GL_SPECULAR, carrierSpecular);
+        glLightf(GL_LIGHT2, GL_CONSTANT_ATTENUATION, 1.0f);
+        glLightf(GL_LIGHT2, GL_LINEAR_ATTENUATION, 0.015f);
+        glLightf(GL_LIGHT2, GL_QUADRATIC_ATTENUATION, 0.003f);
+    } else {
+        glDisable(GL_LIGHT2);
+    }
+    
+    // GL_LIGHT3: Dynamic Plane Landing Lights (forward spotlight)
+    if (flightSim && flightSim->player.throttle > 0.3f) {
+        Vector3f lightPos = flightSim->player.position + flightSim->player.forward * 5.0f;
+        GLfloat planeLightPos[] = { lightPos.x, lightPos.y, lightPos.z, 1.0f };
+        GLfloat planeLightDir[] = { flightSim->player.forward.x, flightSim->player.forward.y, flightSim->player.forward.z };
+        GLfloat planeDiffuse[] = { 1.0f, 1.0f, 0.95f, 1.0f };
+        
+        glEnable(GL_LIGHT3);
+        glLightfv(GL_LIGHT3, GL_POSITION, planeLightPos);
+        glLightfv(GL_LIGHT3, GL_SPOT_DIRECTION, planeLightDir);
+        glLightfv(GL_LIGHT3, GL_DIFFUSE, planeDiffuse);
+        glLightfv(GL_LIGHT3, GL_SPECULAR, planeDiffuse);
+        glLightf(GL_LIGHT3, GL_SPOT_CUTOFF, 25.0f);  // 25 degree cone
+        glLightf(GL_LIGHT3, GL_SPOT_EXPONENT, 15.0f);  // Focused beam
+        glLightf(GL_LIGHT3, GL_CONSTANT_ATTENUATION, 1.0f);
+        glLightf(GL_LIGHT3, GL_LINEAR_ATTENUATION, 0.05f);
+        glLightf(GL_LIGHT3, GL_QUADRATIC_ATTENUATION, 0.01f);
+    } else {
+        glDisable(GL_LIGHT3);
+    }
+    
+    // GL_LIGHT4: Secondary Fill Light (opposite side of sun for softer shadows)
+    GLfloat fillLightPos[] = { -0.5f, 0.3f, 0.5f, 0.0f };  // Directional fill
+    GLfloat fillDiffuse[] = { 0.25f, 0.28f, 0.35f, 1.0f };  // Cool blue fill
+    GLfloat fillSpecular[] = { 0.1f, 0.1f, 0.15f, 1.0f };
+    glEnable(GL_LIGHT4);
+    glLightfv(GL_LIGHT4, GL_POSITION, fillLightPos);
+    glLightfv(GL_LIGHT4, GL_DIFFUSE, fillDiffuse);
+    glLightfv(GL_LIGHT4, GL_SPECULAR, fillSpecular);
+    GLfloat noAmbient[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    glLightfv(GL_LIGHT4, GL_AMBIENT, noAmbient);
+    
+    // GL_LIGHT5: Rim/Back Light for better object definition
+    GLfloat rimLightPos[] = { 0.0f, 0.8f, -1.0f, 0.0f };  // From behind/above
+    GLfloat rimDiffuse[] = { 0.3f, 0.32f, 0.4f, 1.0f };   // Subtle rim light
+    GLfloat rimSpecular[] = { 0.5f, 0.5f, 0.6f, 1.0f };   // Stronger specular for rim
+    glEnable(GL_LIGHT5);
+    glLightfv(GL_LIGHT5, GL_POSITION, rimLightPos);
+    glLightfv(GL_LIGHT5, GL_DIFFUSE, rimDiffuse);
+    glLightfv(GL_LIGHT5, GL_SPECULAR, rimSpecular);
+    glLightfv(GL_LIGHT5, GL_AMBIENT, noAmbient);
+    
+    // GL_LIGHT6: Water Reflection Light (bounced light from ocean)
+    if (!isNight) {
+        GLfloat waterReflectPos[] = { 0.0f, -1.0f, 0.0f, 0.0f };  // From below (water reflection)
+        GLfloat waterReflectDiffuse[] = { 0.15f, 0.2f, 0.25f, 1.0f };  // Blue-ish water bounce
+        glEnable(GL_LIGHT6);
+        glLightfv(GL_LIGHT6, GL_POSITION, waterReflectPos);
+        glLightfv(GL_LIGHT6, GL_DIFFUSE, waterReflectDiffuse);
+        glLightfv(GL_LIGHT6, GL_SPECULAR, noAmbient);  // No specular from water
+        glLightfv(GL_LIGHT6, GL_AMBIENT, noAmbient);
+    } else {
+        glDisable(GL_LIGHT6);
+    }
+    
+    // Set global ambient light
+    GLfloat globalAmbient[] = { 0.2f, 0.2f, 0.25f, 1.0f };
+    if (isNight) {
+        globalAmbient[0] = 0.05f; globalAmbient[1] = 0.05f; globalAmbient[2] = 0.08f;
+    }
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, globalAmbient);
+    
+    // DISABLE FOG for Level 1 to match user request and fix "flat blue" water
+    glDisable(GL_FOG);
+    
+    /* ===== ATMOSPHERIC FOG FOR DEPTH =====
+    glEnable(GL_FOG);
+    glFogi(GL_FOG_MODE, GL_EXP2);  // Exponential fog for realistic atmosphere
+    
+    // Dynamic fog color based on time of day
+    GLfloat fogColor[4];
+    if (isNight) {
+        fogColor[0] = 0.02f; fogColor[1] = 0.03f; fogColor[2] = 0.08f; fogColor[3] = 1.0f;  // Dark blue night
+    } else if (lighting.sunHeight < 0.3f) {
+        // Sunrise/sunset - golden haze
+        float t = lighting.sunHeight / 0.3f;
+        fogColor[0] = 0.8f; fogColor[1] = 0.5f + t * 0.2f; fogColor[2] = 0.4f + t * 0.3f; fogColor[3] = 1.0f;
+    } else {
+        fogColor[0] = 0.6f; fogColor[1] = 0.7f; fogColor[2] = 0.85f; fogColor[3] = 1.0f;  // Hazy blue sky
+    }
+    glFogfv(GL_FOG_COLOR, fogColor);
+    glFogf(GL_FOG_DENSITY, 0.0008f);  // Subtle distant fog
+    glHint(GL_FOG_HINT, GL_NICEST);
+    */
     
     // Update shadow system
-    DayLighting lighting = skySystem.getCurrentLighting();
     Vector3f shadowLightDir(0.3f, -0.9f, 0.2f);
     if (lighting.sunHeight > 0) {
         shadowLightDir.y = -lighting.sunHeight;
@@ -1038,6 +1382,7 @@ void Level1::render() {
     renderWater();
     renderPort();
     renderCarrier();
+    renderBoats();
     
     // Render shadows
     renderShadows();
@@ -1050,6 +1395,9 @@ void Level1::render() {
     // Render wind particles
     if (flightSim) {
         particleEffects.renderWind(flightSim->player.forward, flightSim->getSpeed());
+        
+        // Render jet trails
+        particleEffects.renderJetTrail();
     }
     
     // Render game elements
@@ -1092,9 +1440,18 @@ void Level1::render() {
 }
 
 void Level1::renderWater() {
+    // Reset material state to prevent metallic appearance
+    glDisable(GL_LIGHTING);
+    glDisable(GL_FOG); // Ensure fog is disabled for water
+    glDisable(GL_COLOR_MATERIAL);
+    // Reset material to white
+    GLfloat white[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, white);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, white);
+    glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 0.0f);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex_water);
-    glDisable(GL_LIGHTING);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE); // CHANGED TO MODULATE for Navy Blue tint
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
@@ -1106,8 +1463,8 @@ void Level1::renderWater() {
     float waveOffset = sin(ringTimer * 0.3f) * 0.02f;  // Gentle wave motion
     
     // Multiple water layers for depth effect
-    // Layer 1: Deep water (darker, slower)
-    glColor4f(0.1f, 0.25f, 0.5f, 1.0f);
+    // Layer 1: Deep water (darker, slower) - ADJUSTED LIGHTER
+    glColor4f(0.05f, 0.1f, 0.35f, 1.0f); // Medium deep blue
     glBegin(GL_QUADS);
     float offset1 = timeOffset * 0.3f;
     glTexCoord2f(offset1, offset1 + waveOffset);
@@ -1120,8 +1477,8 @@ void Level1::renderWater() {
     glVertex3f(-size, waterLevel - 1.0f, size);
     glEnd();
     
-    // Layer 2: Main water surface (medium blue, main animation)
-    glColor4f(0.15f, 0.4f, 0.7f, 0.9f);
+    // Layer 2: Main water surface (medium blue, main animation) - ADJUSTED LIGHTER
+    glColor4f(0.1f, 0.25f, 0.55f, 0.9f); // Lighter blue
     glBegin(GL_QUADS);
     float offset2 = timeOffset + waveOffset;
     glTexCoord2f(offset2, -offset2 * 0.5f);
@@ -1134,8 +1491,8 @@ void Level1::renderWater() {
     glVertex3f(-size, waterLevel - 0.2f, size);
     glEnd();
     
-    // Layer 3: Surface highlights (lighter, faster, more transparent)
-    glColor4f(0.3f, 0.55f, 0.85f, 0.4f);
+    // Layer 3: Surface highlights (lighter, faster, more transparent) - UPDATED SUBTLER
+    glColor4f(0.1f, 0.2f, 0.4f, 0.25f);
     glBegin(GL_QUADS);
     float offset3 = timeOffset * 1.5f - waveOffset * 2.0f;
     float texScale2 = texScale * 1.5f;  // Different scale for variety
@@ -1231,6 +1588,160 @@ void Level1::renderWater() {
     
     glDisable(GL_BLEND);
     glEnable(GL_LIGHTING);
+    glEnable(GL_COLOR_MATERIAL);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    
+    // CRITICAL FIX: Restore texture environment to default (MODULATE)
+    // This prevents the DECAL mode from leaking to other objects (explosions, lens flare, etc.)
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+}
+
+void Level1::renderBoats() {
+    if (boats.empty()) return;
+
+    // Set material properties for boats (metal hull)
+    GLfloat boatAmbient[] = { 0.25f, 0.25f, 0.3f, 1.0f };
+    GLfloat boatDiffuse[] = { 0.6f, 0.6f, 0.65f, 1.0f };
+    GLfloat boatSpecular[] = { 0.7f, 0.7f, 0.75f, 1.0f };
+    GLfloat boatShininess = 40.0f;  // Shiny metal hull
+    glMaterialfv(GL_FRONT, GL_AMBIENT, boatAmbient);
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, boatDiffuse);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, boatSpecular);
+    glMaterialf(GL_FRONT, GL_SHININESS, boatShininess);
+
+    for (const auto& boat : boats) {
+        glPushMatrix();
+        glTranslatef(boat.position.x, boat.position.y, boat.position.z);
+
+        Vector3f dir = boat.forwardDir * (boat.movingForward ? 1.0f : -1.0f);
+        float yaw = atan2(dir.x, dir.z) * 180.0f / 3.14159f;
+        glRotatef(yaw + 180.0f, 0, 1, 0);
+
+        float roll = sin(ringTimer * boat.bobSpeed * 0.8f + boat.phase) * 2.0f;
+        glRotatef(roll, 0, 0, 1);
+
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, tex_boat);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glScalef(10.5f, 10.5f, 10.5f);
+        model_boat.Draw();
+        glPopMatrix();
+
+        // Wake and foam around hull
+        glDisable(GL_TEXTURE_2D);
+        glDisable(GL_LIGHTING);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // Foam ring around hull
+        float foamAlpha = boat.isMoving ? 0.5f : 0.55f;
+        float foamRadius = boat.isMoving ? 18.0f : 20.0f;
+        glColor4f(0.95f, 0.98f, 1.0f, foamAlpha);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex3f(boat.position.x, waterLevel + 0.5f, boat.position.z);
+        for (int i = 0; i <= 24; i++) {
+            float angle = (float)i / 24.0f * 6.28318f;
+            float wave = sin(angle * 3.0f + ringTimer * 2.0f + boat.phase) * 1.8f;
+            glVertex3f(
+                boat.position.x + cos(angle) * (foamRadius + wave),
+                waterLevel + 0.5f,
+                boat.position.z + sin(angle) * (foamRadius + wave)
+            );
+        }
+        glEnd();
+
+        // Wake effects for moving boats
+        if (boat.isMoving && boat.pathLength > 0.001f) {
+            Vector3f dirNorm = boat.forwardDir * (boat.movingForward ? 1.0f : -1.0f);
+            dirNorm = dirNorm.unit();
+            Vector3f right(dirNorm.z, 0.0f, -dirNorm.x);
+            float rightLen = sqrt(right.x * right.x + right.z * right.z);
+            if (rightLen > 0.0001f) {
+                right = right * (1.0f / rightLen);
+
+                // Bow wave (white foam at front)
+                Vector3f bowPos = boat.position + dirNorm * 12.0f;
+                glColor4f(1.0f, 1.0f, 1.0f, 0.7f);
+                glBegin(GL_TRIANGLE_FAN);
+                glVertex3f(bowPos.x, waterLevel + 0.6f, bowPos.z);
+                for (int i = 0; i <= 12; i++) {
+                    float angle = (float)i / 12.0f * 3.14159f - 1.5708f;
+                    float r = 6.0f + sin(ringTimer * 4.0f + (float)i) * 1.0f;
+                    glColor4f(1.0f, 1.0f, 1.0f, 0.5f - (float)i * 0.03f);
+                    glVertex3f(
+                        bowPos.x + cos(angle) * r * dirNorm.x + sin(angle) * r * right.x,
+                        waterLevel + 0.55f,
+                        bowPos.z + cos(angle) * r * dirNorm.z + sin(angle) * r * right.z
+                    );
+                }
+                glEnd();
+
+                // V-shaped wake trail (left arm)
+                float wakeLen = 60.0f + boat.moveSpeed * 1.5f;
+                float spreadAngle = 0.35f;
+                Vector3f sternPos = boat.position - dirNorm * 10.0f;
+
+                glBegin(GL_QUAD_STRIP);
+                for (int s = 0; s <= 10; s++) {
+                    float t = (float)s / 10.0f;
+                    float dist = t * wakeLen;
+                    float width = 2.0f + t * 8.0f;
+                    float alpha = 0.5f * (1.0f - t);
+                    float waveOff = sin(ringTimer * 3.0f + t * 8.0f) * 0.8f;
+
+                    Vector3f leftDir = dirNorm * (-1.0f) + right * spreadAngle;
+                    float leftLen = sqrt(leftDir.x * leftDir.x + leftDir.z * leftDir.z);
+                    leftDir = leftDir * (1.0f / leftLen);
+
+                    Vector3f pos = sternPos + leftDir * dist;
+                    glColor4f(1.0f, 1.0f, 1.0f, alpha);
+                    glVertex3f(pos.x - right.x * width + waveOff, waterLevel + 0.4f, pos.z - right.z * width);
+                    glVertex3f(pos.x + right.x * width + waveOff, waterLevel + 0.4f, pos.z + right.z * width);
+                }
+                glEnd();
+
+                // V-shaped wake trail (right arm)
+                glBegin(GL_QUAD_STRIP);
+                for (int s = 0; s <= 10; s++) {
+                    float t = (float)s / 10.0f;
+                    float dist = t * wakeLen;
+                    float width = 2.0f + t * 8.0f;
+                    float alpha = 0.5f * (1.0f - t);
+                    float waveOff = sin(ringTimer * 3.0f + t * 8.0f + 1.5f) * 0.8f;
+
+                    Vector3f rightDir = dirNorm * (-1.0f) - right * spreadAngle;
+                    float rightDirLen = sqrt(rightDir.x * rightDir.x + rightDir.z * rightDir.z);
+                    rightDir = rightDir * (1.0f / rightDirLen);
+
+                    Vector3f pos = sternPos + rightDir * dist;
+                    glColor4f(1.0f, 1.0f, 1.0f, alpha);
+                    glVertex3f(pos.x - right.x * width + waveOff, waterLevel + 0.4f, pos.z - right.z * width);
+                    glVertex3f(pos.x + right.x * width + waveOff, waterLevel + 0.4f, pos.z + right.z * width);
+                }
+                glEnd();
+
+                // Center turbulence strip
+                glBegin(GL_QUAD_STRIP);
+                for (int s = 0; s <= 12; s++) {
+                    float t = (float)s / 12.0f;
+                    float dist = t * wakeLen * 0.7f;
+                    float width = 3.0f + t * 4.0f;
+                    float alpha = 0.4f * (1.0f - t * 0.8f);
+                    float waveOff = sin(ringTimer * 5.0f + t * 10.0f) * 1.2f;
+
+                    Vector3f pos = sternPos - dirNorm * dist;
+                    glColor4f(0.9f, 0.95f, 1.0f, alpha);
+                    glVertex3f(pos.x - right.x * width, waterLevel + 0.45f + waveOff * 0.1f, pos.z - right.z * width);
+                    glVertex3f(pos.x + right.x * width, waterLevel + 0.45f + waveOff * 0.1f, pos.z + right.z * width);
+                }
+                glEnd();
+            }
+        }
+
+        glDisable(GL_BLEND);
+        glEnable(GL_LIGHTING);
+        glEnable(GL_TEXTURE_2D);
+    }
 }
 
 void Level1::renderPort() {
@@ -1553,15 +2064,81 @@ void Level1::renderPort() {
     model_truck.Draw();
     glPopMatrix();
 
+    // Render humvees on the port
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex_humvee);
+    glColor3f(1.0f, 1.0f, 1.0f);
+
+    // Humvee 1 - near helipad
+    glPushMatrix();
+    glTranslatef(portX + 120.0f, portHeight + 0.1f, -650.0f);
+    glRotatef(45.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_humvee.Draw();
+    glPopMatrix();
+
+    // Humvee 2 - near helipad
+    glPushMatrix();
+    glTranslatef(portX + 140.0f, portHeight + 0.1f, -620.0f);
+    glRotatef(30.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_humvee.Draw();
+    glPopMatrix();
+
+    // Humvee 3 - near tents
+    glPushMatrix();
+    glTranslatef(portX + 80.0f, portHeight + 0.1f, -150.0f);
+    glRotatef(-60.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_humvee.Draw();
+    glPopMatrix();
+
+    // Humvee 4 - near container yard
+    glPushMatrix();
+    glTranslatef(portX + 250.0f, portHeight + 0.1f, -500.0f);
+    glRotatef(90.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_humvee.Draw();
+    glPopMatrix();
+
+    // Humvee 5 - patrol near edge
+    glPushMatrix();
+    glTranslatef(portX + 50.0f, portHeight + 0.1f, 50.0f);
+    glRotatef(0.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_humvee.Draw();
+    glPopMatrix();
+
+    // Humvee 6 - near second tent area
+    glPushMatrix();
+    glTranslatef(portX + 85.0f, portHeight + 0.1f, 350.0f);
+    glRotatef(120.0f, 0, 1, 0);
+    glScalef(0.08f, 0.08f, 0.08f);
+    model_humvee.Draw();
+    glPopMatrix();
+
     // Leave texture/lighting state enabled for subsequent textured objects
+    
+    // Draw Lighthouse (Light Animation Source)
+    drawLighthouse();
 }
 
 void Level1::renderCarrier() {
-    // 1. Draw the Model (Scaled)
+    // 1. Draw the Model (Scaled) with material properties
     glPushMatrix();
     glTranslatef(carrierPosition.x, carrierPosition.y, carrierPosition.z);
     glRotatef(carrierRotation, 0, 1, 0);
     glScalef(carrierScale, carrierScale, carrierScale);
+    
+    // Set material properties for metal carrier
+    GLfloat matAmbient[] = { 0.3f, 0.3f, 0.35f, 1.0f };
+    GLfloat matDiffuse[] = { 0.5f, 0.5f, 0.55f, 1.0f };
+    GLfloat matSpecular[] = { 0.6f, 0.6f, 0.65f, 1.0f };
+    GLfloat matShininess = 25.0f;  // Moderate shine for painted metal
+    glMaterialfv(GL_FRONT, GL_AMBIENT, matAmbient);
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, matDiffuse);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, matSpecular);
+    glMaterialf(GL_FRONT, GL_SHININESS, matShininess);
     
     glColor3f(0.5f, 0.5f, 0.55f);
     model_carrier.Draw();
@@ -1796,7 +2373,7 @@ void Level1::renderRockets() {
         
         // Render 3D rocket model
         glColor3f(1.0f, 1.0f, 1.0f);
-        glScalef(0.25f, 0.25f, 0.25f);
+        glScalef(0.15f, 0.15f, 0.15f); // Reduced from 0.25f
         if (tex_rocket != 0) {
             glEnable(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, tex_rocket);
@@ -2376,7 +2953,10 @@ void Level1::renderLevelCompleteScreen() {
 
 void Level1::handleKeyboard(unsigned char key, bool pressed) {
     if (!active) return;
-    if (key == 27) exit(0);  // ESC
+    if (key == 27) {  // ESC - open options menu
+        GameManager::getInstance().switchToLevel("options");
+        return;
+    }
     
     // Reset key
     if ((key == 'r' || key == 'R') && pressed) {
@@ -2395,6 +2975,7 @@ void Level1::handleKeyboard(unsigned char key, bool pressed) {
         initRings();
         initToolkits();
         initRockets();
+        initBoats();
         shootingSystem.reset();  // Reset shooting system
         
         // Reset plane - start on carrier deck, stationary
@@ -2438,6 +3019,24 @@ void Level1::handleMouse(int x, int y) {
 
 void Level1::onEnter() {
     active = true;
+    // IMPORTANT: Ensure depth test is enabled when entering level
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+
+    // Reload the selected plane model and texture to support "Change Plane" from menus
+    if (flightSim) {
+        flightSim->modelLoaded = false; // Force reload even if a model is already loaded
+        int selectedPlane = PlaneSelectionLevel::getSelectedPlane();
+        if (selectedPlane == 1) {
+             flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
+        } else if (selectedPlane == 2) {
+             flightSim->loadModelWithTexture("Models/plane 3/plane 3.3ds", "");
+        } else {
+             flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
+        }
+    }
+
     screenWidth = glutGet(GLUT_WINDOW_WIDTH);
     screenHeight = glutGet(GLUT_WINDOW_HEIGHT);
     glutSetCursor(GLUT_CURSOR_NONE);
@@ -2452,6 +3051,8 @@ void Level1::onEnter() {
         flightSim->modelLoaded = false;  // allow reload
         if (selectedPlane == 1) {
             flightSim->loadModelWithTexture("Models/plane 2/plane2.3ds", "Models/plane 2/Textures/Color.bmp");
+        } else if (selectedPlane == 2) {
+            flightSim->loadModelWithTexture("Models/plane 3/plane 3.3ds", "");
         } else {
             flightSim->loadModelWithTexture("models/plane/mitsubishi_a6m2_zero_model_11.3ds", "models/plane/mitsubishi_a6m2_zero_texture.bmp");
         }
@@ -2462,6 +3063,7 @@ void Level1::onEnter() {
 void Level1::onExit() {
     active = false;
     glutSetCursor(GLUT_CURSOR_INHERIT);
+    soundSystem.stopEngineSound();
 }
 
 void Level1::cleanup() {
@@ -2485,3 +3087,84 @@ void Level1::cleanup() {
 void Level1::renderGround() {
     // Ground rendering is handled by renderWater and renderPort
 }
+
+void Level1::drawLighthouse() {
+    float x = 500.0f;
+    float z = 0.0f;
+    float baseY = portHeight;
+    
+    glPushMatrix();
+    glTranslatef(x, baseY, z);
+    glRotatef(-90.0f, 1, 0, 0); // Upright cylinder
+    
+    glEnable(GL_TEXTURE_2D);
+    
+    // Base/Wall
+    glBindTexture(GL_TEXTURE_2D, tex_lighthouse_wall);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    GLUquadric* quad = gluNewQuadric();
+    gluQuadricTexture(quad, GL_TRUE);
+    gluCylinder(quad, 6.0f, 4.0f, 55.0f, 32, 1); // Tapered cylinder
+    
+    // Top Platform (Red)
+    glTranslatef(0.0f, 0.0f, 55.0f);
+    glBindTexture(GL_TEXTURE_2D, tex_lighthouse_top);
+    // Platform base
+    gluDisk(quad, 0.0f, 7.0f, 32, 1);
+    
+    // Lantern room
+    gluCylinder(quad, 4.0f, 4.0f, 8.0f, 32, 1);
+    
+    // === LIGHT BULB (Emissive Sphere) ===
+    glPushMatrix();
+    glTranslatef(0.0f, 0.0f, 4.0f); // Center of lantern room
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING); // Make it self-illuminated
+    glColor3f(1.0f, 1.0f, 0.8f); // Bright yellow-white
+    glutSolidSphere(2.0f, 16, 16);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_TEXTURE_2D);
+    glPopMatrix();
+    
+    // === LIGHT BEAM (Visual cone) ===
+    // Only draw at night
+    if (skySystem.isNightTime()) {
+        glPushMatrix();
+        glTranslatef(0.0f, 0.0f, 4.0f); // Center of lantern room
+        
+        // Rotate beam to match GL_LIGHT1 rotation
+        float time = ringTimer * 2.0f;
+        float angle = -time * 180.0f / 3.14159f; // Convert rad to deg (negative for direction match)
+        glRotatef(angle, 0, 0, 1); // Rotate around local Z (which is Up for the cylinder)
+        
+        // Draw beam
+        glDisable(GL_TEXTURE_2D);
+        glDisable(GL_LIGHTING);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Additive blending
+        
+        glColor4f(1.0f, 0.9f, 0.7f, 0.3f); // Semi-transparent yellow beam
+        
+        // Beam cone
+        glPushMatrix();
+        glRotatef(90.0f, 0, 1, 0); // Point outwards
+        gluCylinder(quad, 0.5f, 15.0f, 100.0f, 16, 1); // Expand from 0.5 to 15 width, length 100
+        glPopMatrix();
+        
+        // Restore state
+        glDisable(GL_BLEND);
+        glEnable(GL_LIGHTING);
+        glEnable(GL_TEXTURE_2D);
+        glPopMatrix();
+    }
+    
+    // Roof
+    glTranslatef(0.0f, 0.0f, 8.0f);
+    glBindTexture(GL_TEXTURE_2D, tex_lighthouse_top); // Reuse red texture
+    gluCylinder(quad, 5.0f, 0.0f, 5.0f, 32, 1); // Cone
+    
+    gluDeleteQuadric(quad);
+    glPopMatrix();
+}
+
+

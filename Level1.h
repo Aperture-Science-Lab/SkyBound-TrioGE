@@ -69,6 +69,8 @@ private:
     Model_3DS model_tank;           // Tank
     Model_3DS model_truck;          // Truck
     Model_3DS model_rocket;         // Rocket
+    Model_3DS model_boat;           // Boat
+    Model_3DS model_humvee;         // Humvee
     
     // Textures
     GLuint tex_water;               // Water texture
@@ -86,6 +88,24 @@ private:
     GLuint tex_tank2;               // Tank texture 2
     GLuint tex_tank3;               // Tank texture 3
     GLuint tex_tank4;               // Tank texture 4
+    GLuint tex_boat;                // Boat texture
+    GLuint tex_humvee;              // Humvee texture
+
+    // Boats
+    struct BoatInstance {
+        Vector3f position;
+        Vector3f startPosition;
+        Vector3f endPosition;
+        Vector3f forwardDir;     // Facing direction in world space
+        float moveSpeed;
+        float phase;
+        float bobSpeed;
+        float bobAmount;
+        float pathLength;
+        bool isMoving;
+        bool movingForward;
+    };
+    std::vector<BoatInstance> boats;
     
     // Particle Effects System
     ParticleEffects particleEffects;
@@ -108,8 +128,13 @@ private:
     float portHeight;               // Port is higher than water
     void renderGround();
     void renderWater();
+
     void renderPort();
+    void drawLighthouse();
     
+private:
+    GLuint tex_lighthouse_wall;
+    GLuint tex_lighthouse_top;
     // Ring System
     std::vector<Ring> rings;
     int ringsPassedCount;
@@ -163,6 +188,11 @@ private:
     // Shadow System
     ShadowSystem shadowSystem;
     void renderShadows();
+
+    // Boats
+    void initBoats();
+    void updateBoats(float deltaTime);
+    void renderBoats();
     
     // Shooting System
     ShootingSystem shootingSystem;
