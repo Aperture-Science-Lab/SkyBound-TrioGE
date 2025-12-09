@@ -311,6 +311,11 @@ void FlightController::drawPlane() {
 }
 
 void FlightController::drawPlane(bool showWingLights) {
+    // In first-person (cockpit) view, skip drawing the external model
+    if (cameraMode == 1) {
+        return;
+    }
+
     // Lazy reload if something cleared the model after level transitions
     if (!modelLoaded && !loadedModelPath.empty()) {
         loadModelWithTexture(loadedModelPath.c_str(), loadedTexturePath.c_str());
