@@ -8,8 +8,8 @@ SkyBound is a 3D flight simulation application built with C++ and OpenGL. It fea
 - **Aircraft Selection**: Choose from three distinct aircraft types (Zero Fighter, Interceptor, Stealth Jet) with unique visual styles.
 - **Dynamic Environment**:
   - Sky system with day/night transitions.
-  - Volumetric cloud rendering.
-  - Infinite ocean generation.
+  - Cloud rendering.
+  - Infinite ocean and forest generation.
 - **Visual Effects**:
   - Particle systems for smoke and crash effects.
   - Dynamic lighting including navigation and strobe lights.
